@@ -67,6 +67,10 @@ files_tmp_file(openshell_sandbox_tmp_t)
 type openshell_supervisor_tmp_t;
 files_tmp_file(openshell_supervisor_tmp_t)
 
+# The pseudo-terminals a workload opens.
+type openshell_sandbox_devpts_t;
+term_pty(openshell_sandbox_devpts_t)
+
 # The workload's own directory under /run, a file system of its unit: it
 # keeps the certificate authority of its proxy there.
 type openshell_sandbox_runtime_t;
@@ -198,6 +202,13 @@ dev_read_urand(openshell_sandbox_t)
 miscfiles_read_localization(openshell_sandbox_t)
 # User names from the files, not from a service: no D-Bus, no sssd.
 auth_read_passwd(openshell_sandbox_t)
+# df, and every tool that asks how full a file system is.
+fs_getattr_all_fs(openshell_sandbox_t)
+# A pseudo-terminal of its own, for the programs that want one. OpenShell's
+# default sandbox policy does not let the workload open /dev/ptmx; this is
+# for a policy that does.
+term_create_pty(openshell_sandbox_t, openshell_sandbox_devpts_t)
+allow openshell_sandbox_t openshell_sandbox_devpts_t:chr_file { rw_chr_file_perms setattr };
 kernel_dontaudit_getattr_core_if(openshell_sandbox_t)
 kernel_dontaudit_getattr_message_if(openshell_sandbox_t)
 

@@ -111,8 +111,6 @@ jobs:
       - name: Run the functional tests
         env:
           WORK: ${{ runner.temp }}/vm
-          # For this branch's first runs only: to see what the work denies.
-          TEST_ARGS: --selinux-discovery
         run: test/vm/run-vm.sh rpms
       - if: always()
         name: What was denied, and the journals

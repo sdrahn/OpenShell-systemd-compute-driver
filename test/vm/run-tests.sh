@@ -248,7 +248,10 @@ work "git: a diff and a branch" 'cd repo && echo more >>file && git diff --stat 
 work "a C program is compiled and run" 'printf "#include <stdio.h>\nint main(void){puts(\"built\");return 0;}\n" >hello.c && gcc -o hello hello.c && ./hello | grep -qx built'
 work "make runs a rule" 'printf "all:\n\t@echo made\n" >Makefile && make | grep -qx made'
 work "a Python script reads, computes and writes" 'python3 -c "import json, hashlib, pathlib; pathlib.Path(\"out.json\").write_text(json.dumps({\"sha\": hashlib.sha256(b\"x\").hexdigest()}))" && grep -q sha out.json'
-work "Python starts processes in parallel" 'python3 -c "import multiprocessing as m; print(sum(m.Pool(2).map(abs, [-1, -2, -3])))" | grep -qx 6'
+work "Python starts processes in parallel" 'python3 -c "
+import subprocess, sys
+ps = [subprocess.Popen([sys.executable, \"-c\", \"print(%d * 2)\" % n], stdout=subprocess.PIPE) for n in (1, 2, 3)]
+print(sum(int(p.communicate()[0]) for p in ps))" | grep -qx 12'
 work "Python makes a virtual environment" 'python3 -m venv --without-pip venv && venv/bin/python -c "import sys; print(sys.prefix)" | grep -q /sandbox/venv'
 work "a server on loopback is reached" 'python3 -m http.server 8123 --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8123/file\" if False else \"http://127.0.0.1:8123/\").status)" | grep -qx 200; r=$?; kill %1; exit $r'
 work "a Unix socket in the workspace" 'python3 -c "
@@ -257,14 +260,16 @@ p = \"/sandbox/test.sock\"
 s = socket.socket(socket.AF_UNIX); s.bind(p); s.listen(1)
 c = socket.socket(socket.AF_UNIX); c.connect(p); a, _ = s.accept()
 c.sendall(b\"ok\"); print(a.recv(2).decode()); os.unlink(p)" | grep -qx ok'
-work "a pseudo-terminal" 'script -qec "tty && echo on-a-tty" /dev/null | grep -q on-a-tty'
 work "an archive is packed and unpacked" 'tar -czf repo.tar.gz repo && mkdir unpacked && tar -xzf repo.tar.gz -C unpacked && test -f unpacked/repo/file'
-work "temporary files and shared memory" 't=$(mktemp) && echo x >$t && rm $t && echo y >/dev/shm/agent-test && rm /dev/shm/agent-test'
-work "its own processes: list, signal, wait" 'sleep 300 & p=$!; ps -o pid= -p $p | grep -q . && kill $p && ! wait $p'
+work "temporary files" 't=$(mktemp) && echo x >$t && rm $t && d=$(mktemp -d) && touch $d/f && rm -r $d'
+work "its own processes: list, signal, wait" 'sleep 300 >/dev/null 2>&1 & p=$!; ps -o pid= -p $p | grep -q . && kill $p; wait $p; [ $? = 143 ]'
 work "the host is read: packages, release, kernel" 'rpm -q systemd | grep -q systemd && grep -q openSUSE /etc/os-release && uname -r | grep -q .'
 work "the host is read: processes, memory, disks" 'ps aux | grep -q . && free | grep -q Mem && df / | grep -q /'
 work "the host is read: network state" 'ip -br addr | grep -q lo && ss -ltn >/dev/null'
 work "files are found and searched" 'find /usr/share/doc -maxdepth 1 | head -n 3 | grep -q . && grep -r hello repo/file'
+# Not here: a pseudo-terminal from /dev/ptmx and files in /dev/shm.
+# OpenShell's default sandbox policy withholds both from the workload,
+# whatever this driver or its SELinux module allow.
 # What stays out of reach, as before the work.
 refuse "it still cannot ask systemd for a unit's state" inside "$name" systemctl status openshell-systemd-helper.service
 refuse "it still cannot read the journal" inside "$name" sh -c 'journalctl -n 1 --no-pager 2>/dev/null | grep -q .'
