@@ -68,7 +68,7 @@ workload, one for its supervisor. A workload reaches its supervisor's
 control socket and no other service's.
 
 %prep
-%autosetup -a1 -a2
+%setup -q -a 1 -a 2
 # OpenShell's crates from its source tree, not from the vendored copies:
 # their build reads the proto files of the tree, which a vendored crate
 # does not have next to it.
