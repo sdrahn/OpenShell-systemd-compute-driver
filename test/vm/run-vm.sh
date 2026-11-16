@@ -11,6 +11,7 @@
 #
 # Needs qemu-system-x86, qemu-utils, cloud-image-utils and /dev/kvm.
 # WORK: the working directory (kept; the image is cached there).
+# TEST_ARGS: further arguments for run-tests.sh (--selinux-discovery).
 # The results come back as $WORK/results.
 set -euo pipefail
 
@@ -146,7 +147,7 @@ scp "${scp_opts[@]}" "$rpms"/*.rpm root@127.0.0.1:/root/driver-vm/rpms/
 vm 'bash /root/driver-vm/openshell-setup.sh' 2>&1 | tee "$work/openshell-setup.log"
 [ "${PIPESTATUS[0]}" = 0 ] || { log "setting up OpenShell failed"; exit 1; }
 set +e
-vm 'bash /root/driver-vm/run-tests.sh --disposable --results /root/driver-vm/results' 2>&1 | tee "$work/test.log"
+vm "bash /root/driver-vm/run-tests.sh --disposable --results /root/driver-vm/results ${TEST_ARGS:-}" 2>&1 | tee "$work/test.log"
 status=${PIPESTATUS[0]}
 set -e
 rm -rf "$work/results"
