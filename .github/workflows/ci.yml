@@ -51,10 +51,13 @@ jobs:
       # nothing here needs it; when it is down, zypper fails the job.
       - name: Disable the codec repository
         run: zypper -n mr -d repo-openh264 >/dev/null 2>&1 || true
+      # With the packages whose macros the spec uses: it cannot be read
+      # without them.
       - name: Tools
         run: >
           zypper -n --gpg-auto-import-keys in --no-recommends
           git tar gzip zstd curl findutils rpm-build cargo
+          sysuser-tools systemd-rpm-macros selinux-policy-devel
       - uses: actions/checkout@v4
       - name: Build requirements of the spec
         run: |
