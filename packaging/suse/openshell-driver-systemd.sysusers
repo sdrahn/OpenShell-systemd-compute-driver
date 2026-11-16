@@ -1,0 +1,2 @@
+# The user every sandbox's supervisor and workload run as.
+u openshell-sandbox - "OpenShell sandboxes" / /usr/sbin/nologin

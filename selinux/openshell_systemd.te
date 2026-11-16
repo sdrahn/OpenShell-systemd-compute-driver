@@ -1,0 +1,230 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+
+policy_module(openshell_systemd, 1.0.0)
+
+# Domains for the sandboxes of the systemd compute driver.
+#
+# openshell_sandbox_t is a workload: openshell-sandbox and everything it
+# starts. It reads the host as its unprivileged user may, writes its
+# workspace and its temporary files, and talks to its supervisor. It
+# cannot connect to another service's socket (D-Bus, systemd, a container
+# engine), signal or trace another domain, or write anywhere else, even
+# where file modes would let its user.
+#
+# openshell_supervisor_t is a supervisor: it holds the sandbox's
+# credentials and carries its network traffic.
+#
+# The units enter the domains through the labels of the two programs, so
+# they start unchanged on a host without this module.
+
+gen_require(`
+	type init_t;
+')
+
+########################################
+# Types
+
+type openshell_sandbox_t;
+type openshell_sandbox_exec_t;
+init_daemon_domain(openshell_sandbox_t, openshell_sandbox_exec_t)
+# The units set NoNewPrivileges=, under which a domain is entered only
+# with this.
+init_nnp_daemon_domain(openshell_sandbox_t)
+
+type openshell_supervisor_t;
+type openshell_supervisor_exec_t;
+init_daemon_domain(openshell_supervisor_t, openshell_supervisor_exec_t)
+init_nnp_daemon_domain(openshell_supervisor_t)
+
+# The helper's state directory, and what in it is neither domain's.
+type openshell_systemd_var_lib_t;
+files_type(openshell_systemd_var_lib_t)
+files_mountpoint(openshell_systemd_var_lib_t)
+
+# A launch's credentials and descriptor: the supervisor's alone.
+type openshell_supervisor_conf_t;
+files_type(openshell_supervisor_conf_t)
+files_mountpoint(openshell_supervisor_conf_t)
+
+# What the two share: the bootstrap file and the control socket.
+type openshell_sandbox_channel_t;
+files_type(openshell_sandbox_channel_t)
+files_mountpoint(openshell_sandbox_channel_t)
+
+# A sandbox's workspace, /sandbox.
+type openshell_sandbox_workspace_t;
+files_type(openshell_sandbox_workspace_t)
+files_mountpoint(openshell_sandbox_workspace_t)
+
+# A supervisor's runtime directory.
+type openshell_supervisor_runtime_t;
+files_pid_file(openshell_supervisor_runtime_t)
+
+type openshell_sandbox_tmp_t;
+files_tmp_file(openshell_sandbox_tmp_t)
+
+type openshell_supervisor_tmp_t;
+files_tmp_file(openshell_supervisor_tmp_t)
+
+# The workload's own directory under /run, a file system of its unit: it
+# keeps the certificate authority of its proxy there.
+type openshell_sandbox_runtime_t;
+files_pid_file(openshell_sandbox_runtime_t)
+files_mountpoint(openshell_sandbox_runtime_t)
+
+########################################
+# systemd: it reads a launch's environment file and binds a sandbox's
+# directories into the units' mount namespaces.
+
+read_files_pattern(init_t, openshell_systemd_var_lib_t, openshell_systemd_var_lib_t)
+allow init_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:dir { search getattr mounton };
+allow init_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t }:file { getattr mounton };
+allow init_t openshell_sandbox_runtime_t:dir { search getattr mounton };
+# It removes a unit's private /tmp when the unit stops.
+delete_dirs_pattern(init_t, { openshell_sandbox_tmp_t openshell_supervisor_tmp_t }, { openshell_sandbox_tmp_t openshell_supervisor_tmp_t })
+delete_files_pattern(init_t, { openshell_sandbox_tmp_t openshell_supervisor_tmp_t }, { openshell_sandbox_tmp_t openshell_supervisor_tmp_t })
+delete_lnk_files_pattern(init_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+delete_fifo_files_pattern(init_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+delete_sock_files_pattern(init_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+
+########################################
+# The supervisor
+
+allow openshell_supervisor_t self:process { fork signal_perms getsched setsched };
+allow openshell_supervisor_t self:fifo_file rw_fifo_file_perms;
+allow openshell_supervisor_t self:unix_stream_socket { create_stream_socket_perms connectto };
+allow openshell_supervisor_t self:unix_dgram_socket create_socket_perms;
+allow openshell_supervisor_t self:tcp_socket create_stream_socket_perms;
+allow openshell_supervisor_t self:udp_socket create_socket_perms;
+allow openshell_supervisor_t self:netlink_route_socket r_netlink_socket_perms;
+
+# Its launch files.
+search_dirs_pattern(openshell_supervisor_t, openshell_systemd_var_lib_t, openshell_systemd_var_lib_t)
+manage_dirs_pattern(openshell_supervisor_t, openshell_supervisor_conf_t, openshell_supervisor_conf_t)
+manage_files_pattern(openshell_supervisor_t, openshell_supervisor_conf_t, openshell_supervisor_conf_t)
+
+# The channel: the control socket is the supervisor's to make.
+manage_dirs_pattern(openshell_supervisor_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t)
+manage_files_pattern(openshell_supervisor_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t)
+manage_sock_files_pattern(openshell_supervisor_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t)
+
+# Its runtime directory: the health socket, the SSH socket, the proxy's
+# TLS files.
+manage_dirs_pattern(openshell_supervisor_t, openshell_supervisor_runtime_t, openshell_supervisor_runtime_t)
+manage_files_pattern(openshell_supervisor_t, openshell_supervisor_runtime_t, openshell_supervisor_runtime_t)
+manage_sock_files_pattern(openshell_supervisor_t, openshell_supervisor_runtime_t, openshell_supervisor_runtime_t)
+files_search_pids(openshell_supervisor_t)
+
+manage_dirs_pattern(openshell_supervisor_t, openshell_supervisor_tmp_t, openshell_supervisor_tmp_t)
+manage_files_pattern(openshell_supervisor_t, openshell_supervisor_tmp_t, openshell_supervisor_tmp_t)
+files_tmp_filetrans(openshell_supervisor_t, openshell_supervisor_tmp_t, { file dir })
+
+# The workspace is its working directory.
+list_dirs_pattern(openshell_supervisor_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+read_files_pattern(openshell_supervisor_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+
+# The workload connects to the control socket; the supervisor names the
+# program behind a connection from /proc.
+allow openshell_supervisor_t openshell_sandbox_t:unix_stream_socket { connectto rw_stream_socket_perms };
+ps_process_pattern(openshell_supervisor_t, openshell_sandbox_t)
+
+# The sandbox's traffic leaves from here.
+corenet_tcp_connect_all_ports(openshell_supervisor_t)
+corenet_tcp_bind_generic_node(openshell_supervisor_t)
+corenet_udp_bind_generic_node(openshell_supervisor_t)
+sysnet_dns_name_resolve(openshell_supervisor_t)
+miscfiles_read_generic_certs(openshell_supervisor_t)
+miscfiles_read_localization(openshell_supervisor_t)
+
+corecmd_search_bin(openshell_supervisor_t)
+files_read_etc_files(openshell_supervisor_t)
+files_read_usr_files(openshell_supervisor_t)
+kernel_read_system_state(openshell_supervisor_t)
+kernel_read_kernel_sysctls(openshell_supervisor_t)
+kernel_read_network_state(openshell_supervisor_t)
+dev_read_urand(openshell_supervisor_t)
+dev_read_sysfs(openshell_supervisor_t)
+auth_read_passwd(openshell_supervisor_t)
+logging_send_syslog_msg(openshell_supervisor_t)
+# Its own limits, from its control group, and the host's name.
+fs_read_cgroup_files(openshell_supervisor_t)
+optional_policy(`
+	gen_require(`
+		type hostname_etc_t;
+	')
+	read_files_pattern(openshell_supervisor_t, hostname_etc_t, hostname_etc_t)
+')
+# It looks at /var/log when it starts.
+logging_list_logs(openshell_supervisor_t)
+files_dontaudit_getattr_all_dirs(openshell_supervisor_t)
+
+########################################
+# The workload
+
+# ptrace: openshell-sandbox reads the memory of the processes it started
+# to answer their system calls.
+allow openshell_sandbox_t self:process { fork signal_perms getsched setsched setpgid getsession getpgid getcap getrlimit setrlimit ptrace };
+allow openshell_sandbox_t self:fifo_file manage_fifo_file_perms;
+allow openshell_sandbox_t self:unix_stream_socket { create_stream_socket_perms connectto };
+allow openshell_sandbox_t self:unix_dgram_socket { create_socket_perms sendto };
+# Loopback is the only interface of its network namespace.
+allow openshell_sandbox_t self:tcp_socket create_stream_socket_perms;
+allow openshell_sandbox_t self:udp_socket create_socket_perms;
+allow openshell_sandbox_t self:netlink_route_socket r_netlink_socket_perms;
+corenet_tcp_connect_all_ports(openshell_sandbox_t)
+corenet_tcp_bind_generic_node(openshell_sandbox_t)
+corenet_tcp_bind_all_ports(openshell_sandbox_t)
+corenet_udp_bind_generic_node(openshell_sandbox_t)
+corenet_udp_bind_all_ports(openshell_sandbox_t)
+
+# The host, read-only, as far as file modes let the workloads' user: all
+# but the files the policy counts as security files (shadow, the policy
+# itself).
+files_list_non_security(openshell_sandbox_t)
+files_read_non_security_files(openshell_sandbox_t)
+files_read_all_symlinks(openshell_sandbox_t)
+corecmd_exec_all_executables(openshell_sandbox_t)
+libs_exec_lib_files(openshell_sandbox_t)
+can_exec(openshell_sandbox_t, openshell_sandbox_exec_t)
+kernel_read_system_state(openshell_sandbox_t)
+kernel_read_network_state(openshell_sandbox_t)
+kernel_read_all_sysctls(openshell_sandbox_t)
+dev_read_sysfs(openshell_sandbox_t)
+dev_rw_null(openshell_sandbox_t)
+dev_rw_zero(openshell_sandbox_t)
+dev_read_rand(openshell_sandbox_t)
+dev_read_urand(openshell_sandbox_t)
+miscfiles_read_localization(openshell_sandbox_t)
+# User names from the files, not from a service: no D-Bus, no sssd.
+auth_read_passwd(openshell_sandbox_t)
+kernel_dontaudit_getattr_core_if(openshell_sandbox_t)
+kernel_dontaudit_getattr_message_if(openshell_sandbox_t)
+
+# Its workspace and its temporary files.
+manage_dirs_pattern(openshell_sandbox_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+manage_files_pattern(openshell_sandbox_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+manage_lnk_files_pattern(openshell_sandbox_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+manage_fifo_files_pattern(openshell_sandbox_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+manage_sock_files_pattern(openshell_sandbox_t, openshell_sandbox_workspace_t, openshell_sandbox_workspace_t)
+allow openshell_sandbox_t openshell_sandbox_workspace_t:file { execute execute_no_trans map };
+
+manage_dirs_pattern(openshell_sandbox_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+manage_files_pattern(openshell_sandbox_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+manage_lnk_files_pattern(openshell_sandbox_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+manage_fifo_files_pattern(openshell_sandbox_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+manage_sock_files_pattern(openshell_sandbox_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp_t)
+files_tmp_filetrans(openshell_sandbox_t, openshell_sandbox_tmp_t, { file dir lnk_file fifo_file sock_file })
+fs_tmpfs_filetrans(openshell_sandbox_t, openshell_sandbox_tmp_t, { file dir lnk_file fifo_file sock_file })
+
+manage_dirs_pattern(openshell_sandbox_t, openshell_sandbox_runtime_t, openshell_sandbox_runtime_t)
+manage_files_pattern(openshell_sandbox_t, openshell_sandbox_runtime_t, openshell_sandbox_runtime_t)
+files_search_pids(openshell_sandbox_t)
+
+# The channel to its supervisor, and nothing else of the helper's state.
+search_dirs_pattern(openshell_sandbox_t, openshell_systemd_var_lib_t, openshell_systemd_var_lib_t)
+manage_dirs_pattern(openshell_sandbox_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t)
+manage_files_pattern(openshell_sandbox_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t)
+stream_connect_pattern(openshell_sandbox_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t, openshell_supervisor_t)
+allow openshell_sandbox_t openshell_supervisor_t:fd use;
+allow openshell_supervisor_t openshell_sandbox_t:fd use;

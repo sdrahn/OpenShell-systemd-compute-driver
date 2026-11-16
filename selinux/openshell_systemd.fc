@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+
+/usr/libexec/openshell/openshell-supervisor	--	gen_context(system_u:object_r:openshell_supervisor_exec_t,s0)
+/usr/libexec/openshell/openshell-sandbox	--	gen_context(system_u:object_r:openshell_sandbox_exec_t,s0)
+
+/var/lib/openshell/systemd(/.*)?			gen_context(system_u:object_r:openshell_systemd_var_lib_t,s0)
+/var/lib/openshell/systemd/[^/]+/supervisor(/.*)?	gen_context(system_u:object_r:openshell_supervisor_conf_t,s0)
+/var/lib/openshell/systemd/[^/]+/etc(/.*)?		gen_context(system_u:object_r:openshell_supervisor_conf_t,s0)
+/var/lib/openshell/systemd/[^/]+/channel(/.*)?		gen_context(system_u:object_r:openshell_sandbox_channel_t,s0)
+/var/lib/openshell/systemd/[^/]+/control(/.*)?		gen_context(system_u:object_r:openshell_sandbox_channel_t,s0)
+/var/lib/openshell/systemd/[^/]+/workspace(/.*)?	gen_context(system_u:object_r:openshell_sandbox_workspace_t,s0)
+/var/lib/openshell/systemd/[^/]+/resolv\.conf	--	gen_context(system_u:object_r:net_conf_t,s0)
+
+/run/openshell-sandbox(/.*)?				gen_context(system_u:object_r:openshell_supervisor_runtime_t,s0)
+/run/openshell-supervisor-ca(/.*)?			gen_context(system_u:object_r:openshell_sandbox_runtime_t,s0)
+
+# The mount points the units bind a sandbox's directories to.
+/\.openshell(/.*)?					gen_context(system_u:object_r:openshell_systemd_var_lib_t,s0)
+/sandbox					-d	gen_context(system_u:object_r:openshell_sandbox_workspace_t,s0)

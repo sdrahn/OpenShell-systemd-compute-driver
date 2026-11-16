@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The privileged helper of the systemd compute driver. It serves one user:
+# set the gateway's in a drop-in,
+#   [Service]
+#   Environment=OPENSHELL_SYSTEMD_HELPER_ALLOW_USER=<user>
+
+[Unit]
+Description=OpenShell systemd compute driver helper
+Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/openshell/openshell-systemd-helper
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

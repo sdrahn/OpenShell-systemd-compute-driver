@@ -1,0 +1,28 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The OpenShell release this driver is built against is named in three
+# places: Cargo.toml (the crates), packaging/suse (the source the package
+# builds openshell-supervisor and openshell-sandbox from) and
+# test/vm/openshell-version (the gateway the tests run). They must agree.
+#   tools/openshell-version          print it, or fail where they differ
+#   tools/openshell-version vX.Y.Z   set it everywhere (then: cargo update)
+set -euo pipefail
+cd "$(dirname "$0")/.."
+spec=packaging/suse/openshell-driver-systemd.spec
+if [ $# = 1 ]; then
+	new=$1
+	[[ $new =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $new" >&2; exit 2; }
+	sed -i -E "s|(git = \"https://github.com/NVIDIA/OpenShell\", tag = \")v[^\"]+|\1$new|" Cargo.toml
+	sed -i -E "s|^(%define openshell_version +).*|\1${new#v}|" "$spec"
+	echo "$new" >test/vm/openshell-version
+fi
+cargo=$(grep -o 'NVIDIA/OpenShell", tag = "v[^"]*' Cargo.toml | sed 's/.*"//' | sort -u)
+spec_v=v$(awk '$1 == "%define" && $2 == "openshell_version" {print $3}' "$spec")
+test_v=$(head -n1 test/vm/openshell-version)
+if [ "$(echo "$cargo" | wc -l)" != 1 ] || [ "$cargo" != "$spec_v" ] || [ "$cargo" != "$test_v" ]; then
+	echo "the OpenShell release differs: Cargo.toml $(echo $cargo), $spec $spec_v, test/vm/openshell-version $test_v" >&2
+	exit 1
+fi
+echo "$cargo"
