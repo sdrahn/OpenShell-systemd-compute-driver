@@ -69,12 +69,28 @@ control socket and no other service's.
 
 %prep
 %autosetup -a1 -a2
+# OpenShell's crates from its source tree, not from the vendored copies:
+# their build reads the proto files of the tree, which a vendored crate
+# does not have next to it.
+{
+    echo
+    echo '[patch."https://github.com/NVIDIA/OpenShell"]'
+    awk '/^name = "openshell-/ { gsub(/"/, "", $3); name = $3 }
+         /^source = "git\+https:\/\/github.com\/NVIDIA\/OpenShell/ { print name }' Cargo.lock |
+    while read -r crate; do
+        echo "$crate = { path = \"openshell-%{openshell_version}/crates/$crate\" }"
+    done
+} >>.cargo/config.toml
+tail -n 12 .cargo/config.toml
 
 %build
 export CARGO_HOME=$PWD/.cargo
 export PROTOC=%{_bindir}/protoc
 export PROTOC_INCLUDE=%{_includedir}
-cargo build --release --locked --offline
+# Not --locked: with the crates above taken from the tree, Cargo rewrites
+# their entries in the lock file. Every other crate stays as locked, and
+# nothing can be fetched.
+cargo build --release --offline
 # The two stock programs, from the same release.
 cargo build --release --locked --offline \
     --manifest-path openshell-%{openshell_version}/Cargo.toml \
@@ -86,7 +102,7 @@ make -f %{_datadir}/selinux/devel/Makefile -C selinux %{modulename}.pp
 export CARGO_HOME=$PWD/.cargo
 export PROTOC=%{_bindir}/protoc
 export PROTOC_INCLUDE=%{_includedir}
-cargo test --release --locked --offline
+cargo test --release --offline
 
 %install
 # The unit templates name the programs by these paths.
