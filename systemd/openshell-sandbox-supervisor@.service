@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The supervisor of one sandbox (%i: its ID), on the host's network. It
+# holds the sandbox's gateway credentials; the workload's unit mounts none
+# of them.
+
+[Unit]
+Description=OpenShell sandbox %i supervisor
+Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
+StopWhenUnneeded=yes
+
+[Service]
+Type=exec
+User=openshell-sandbox
+Group=openshell-sandbox
+EnvironmentFile=/var/lib/openshell/systemd/%i/supervisor.env
+ExecStart=/usr/libexec/openshell/openshell-supervisor --workdir /sandbox --backend-descriptor-file=/.openshell/supervisor/runtime-descriptor.json --auth-bundle-file=/.openshell/supervisor/auth.json --health-socket-path=/run/openshell-sandbox/%i/supervisor-health.sock
+BindPaths=/var/lib/openshell/systemd/%i/supervisor:/.openshell/supervisor
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
+BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/etc/sandbox.jwt:/etc/openshell/auth/sandbox.jwt
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/etc/ca.crt:/etc/openshell/tls/client/ca.crt
+# The supervisor's sockets and its proxy's keys, its own and gone when it
+# stops.
+RuntimeDirectory=openshell-sandbox/%i
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

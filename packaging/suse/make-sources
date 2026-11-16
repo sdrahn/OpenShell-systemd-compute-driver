@@ -1,0 +1,45 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# make-sources: the three source files of the package, into a directory:
+#
+#   openshell-driver-systemd-<version>.tar.gz   this tree, at HEAD
+#   openshell-<release>.tar.gz                  OpenShell's source at the
+#                                               release of tools/openshell-version
+#   vendor.tar.zst                              the crates of both, and the
+#                                               .cargo/config.toml that makes
+#                                               Cargo use them offline
+#
+#   packaging/suse/make-sources <directory>
+#
+# Needs git, cargo, curl, zstd and the network. The package build itself
+# needs none of the network.
+set -euo pipefail
+[ $# = 1 ] || { echo "usage: $0 <directory>" >&2; exit 2; }
+root=$(cd "$(dirname "$0")/../.." && pwd)
+mkdir -p "$1"
+out=$(cd "$1" && pwd)
+name=openshell-driver-systemd
+version=$(awk '$1 == "Version:" {print $2}' "$root/packaging/suse/$name.spec")
+release=$("$root/tools/openshell-version")
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+git -C "$root" archive --format=tar.gz --prefix="$name-$version/" -o "$out/$name-$version.tar.gz" HEAD
+curl -fsSL --retry 3 -o "$work/openshell.tar.gz" "https://github.com/NVIDIA/OpenShell/archive/refs/tags/$release.tar.gz"
+# GitHub names the directory OpenShell-<release without v>; the spec
+# expects openshell-<release without v>.
+mkdir "$work/src"
+tar -xzf "$out/$name-$version.tar.gz" -C "$work/src"
+tree=$work/src/$name-$version
+mkdir "$tree/openshell-${release#v}"
+tar -xzf "$work/openshell.tar.gz" -C "$tree/openshell-${release#v}" --strip-components=1
+tar -czf "$out/openshell-${release#v}.tar.gz" -C "$tree" "openshell-${release#v}"
+
+cd "$tree"
+mkdir -p .cargo
+cargo vendor --locked --versioned-dirs --sync "openshell-${release#v}/Cargo.toml" vendor >.cargo/config.toml
+tar --zstd -cf "$out/vendor.tar.zst" vendor .cargo/config.toml
+cp "$root/packaging/suse/$name.spec" "$out/"
+ls -l "$out"

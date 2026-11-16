@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The workload of one sandbox (%i: its ID): the stock openshell-sandbox,
+# which applies Landlock and seccomp and starts the agent. No capability,
+# no interface but loopback, and of the sandbox's files only the channel
+# and the workspace.
+
+[Unit]
+Description=OpenShell sandbox %i workload
+Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
+Requires=openshell-sandbox-netns@%i.service openshell-sandbox-supervisor@%i.service
+After=openshell-sandbox-netns@%i.service openshell-sandbox-supervisor@%i.service
+BindsTo=openshell-sandbox-supervisor@%i.service
+JoinsNamespaceOf=openshell-sandbox-netns@%i.service
+
+[Service]
+Type=exec
+User=openshell-sandbox
+Group=openshell-sandbox
+Environment=HOME=/sandbox
+WorkingDirectory=/
+ExecStart=/usr/libexec/openshell/openshell-sandbox --bootstrap /.openshell/channel/sandbox/bootstrap.json
+PrivateNetwork=yes
+# The supervisors and the other sandboxes run as the same user: the
+# workload has a process ID namespace of its own, so that it can neither
+# see nor signal them. Needs systemd 257.
+PrivatePIDs=yes
+BindPaths=/var/lib/openshell/systemd/%i/workspace:/sandbox
+BindPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
+BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/resolv.conf:/etc/resolv.conf
+TemporaryFileSystem=/run/openshell-supervisor-ca:mode=0777
+# The supervisors run as the same user: none of their files, of this
+# sandbox or another, is in the workload's mount namespace.
+TemporaryFileSystem=/var/lib/openshell:ro
+TemporaryFileSystem=/run/openshell-sandbox:ro
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+TasksMax=2048

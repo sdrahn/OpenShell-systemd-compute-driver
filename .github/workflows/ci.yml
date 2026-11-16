@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  # The toolchain OpenShell pins for the release the driver is built
+  # against (its rust-toolchain.toml).
+  RUSTUP_TOOLCHAIN: "1.95.0"
+
+jobs:
+  # make check: format, clippy with OpenShell's lint levels, the unit
+  # tests, and the repository's own checks.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: check-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+      - run: make check
+
+  # The packages, built without network from the three source files, in
+  # openSUSE Leap 16, as a build service builds them.
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container: registry.opensuse.org/opensuse/leap:16.0
+    env:
+      RUSTUP_TOOLCHAIN: ""
+    steps:
+      # The image's codec repository is outside openSUSE's mirrors and
+      # nothing here needs it; when it is down, zypper fails the job.
+      - name: Disable the codec repository
+        run: zypper -n mr -d repo-openh264 >/dev/null 2>&1 || true
+      - name: Tools
+        run: >
+          zypper -n --gpg-auto-import-keys in --no-recommends
+          git tar gzip zstd curl findutils rpm-build cargo
+      - uses: actions/checkout@v4
+      - name: Build requirements of the spec
+        run: |
+          rpmspec -q --buildrequires packaging/suse/openshell-driver-systemd.spec | tee /tmp/buildrequires
+          sed 's/ .*//' /tmp/buildrequires | grep -v '^cargo$' | xargs zypper -n in --no-recommends
+          cargo --version
+      - name: The source files
+        run: |
+          git config --global --add safe.directory "$PWD"
+          packaging/suse/make-sources "$PWD/sources"
+      - name: Build the packages
+        run: |
+          rpmbuild -ba --define "_sourcedir $PWD/sources" --define "_topdir $PWD/rpmbuild" \
+            sources/openshell-driver-systemd.spec 2>&1 | grep -vE '^ *(Compiling|Downloaded|Unpacking) ' | tail -n 400
+          test "${PIPESTATUS[0]}" = 0
+          mkdir rpms
+          cp rpmbuild/RPMS/*/*.rpm rpms/
+          ls -l rpms
+          for r in rpms/*.rpm; do echo "== $r"; rpm -qlp "$r"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpms
+          path: rpms/*.rpm
+
+  # The functional tests on those packages, in a Leap 16 VM with SELinux
+  # enforcing and a stock OpenShell gateway.
+  functional:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpms
+          path: rpms
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+      - name: Image cache key
+        id: image
+        run: echo "week=$(date -u +%G-%V)" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vm/base.qcow2
+          key: vm-image-leap16-${{ steps.image.outputs.week }}
+      - name: Run the functional tests
+        env:
+          WORK: ${{ runner.temp }}/vm
+        run: test/vm/run-vm.sh rpms
+      - if: always()
+        name: What was denied, and the journals
+        run: |
+          for f in avc.txt helper.journal units.journal user.journal; do
+            [ -f "$RUNNER_TEMP/vm/results/$f" ] && { echo "######## $f"; tail -n 150 "$RUNNER_TEMP/vm/results/$f" | cut -c1-400; }
+          done
+          true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: functional-results
+          path: |
+            ${{ runner.temp }}/vm/results
+            ${{ runner.temp }}/vm/openshell-setup.log
+            ${{ runner.temp }}/vm/console.log
+          if-no-files-found: ignore

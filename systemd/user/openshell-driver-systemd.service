@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The compute driver, as a service of the user the OpenShell gateway runs
+# as: the gateway accepts a driver socket of its own user only. Enable it
+# for that user with `systemctl --user enable --now`. Settings go in a
+# drop-in (`systemctl --user edit`), for example
+#   Environment=OPENSHELL_SYSTEMD_TLS_CA=/path/to/the/gateway/ca.crt
+
+[Unit]
+Description=OpenShell systemd compute driver
+Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
+Before=openshell-gateway.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/openshell-driver-systemd --bind-socket %t/openshell/systemd-driver.sock
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

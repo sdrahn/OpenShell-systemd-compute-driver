@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The outer network fence of one sandbox (%i: its ID): a network namespace
+# with loopback only, which systemd makes for this unit and keeps while
+# the unit is active. The workload's unit joins it. A non-root process may
+# bind low ports in it, as in the container drivers' namespaces:
+# openshell-sandbox serves the policy DNS on port 53.
+
+[Unit]
+Description=OpenShell sandbox %i network namespace
+Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+PrivateNetwork=yes
+# A unit that joins this one shares its /tmp as well: private, so that
+# the workload's stays writable and its own.
+PrivateTmp=yes
+ExecStart=sysctl -q -w net.ipv4.ip_unprivileged_port_start=0
