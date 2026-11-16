@@ -326,10 +326,10 @@ section "SELinux denials"
 cat /var/log/audit/audit.log* 2>/dev/null | grep 'avc:  denied' >"$results/avc.txt"
 echo "audit records: $(cat /var/log/audit/audit.log* 2>/dev/null | wc -l); denials: $(wc -l <"$results/avc.txt")"
 check "the audit log is being written" sh -c 'cat /var/log/audit/audit.log* | grep -q "type="'
-# The two the workload's report provokes: the system D-Bus socket and
-# journald's.
+# Those the tests provoke: the workload's report tries the system D-Bus
+# socket and journald's, and systemctl in a sandbox tries D-Bus.
 check "the D-Bus attempt was denied by the policy" grep -q 'system_bus_socket.*openshell_sandbox_t' "$results/avc.txt"
-grep -v -E 'comm="python3" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
+grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
 sed -E 's/^.*avc: +denied +//; s/ pid=[0-9]+//; s/ ino=[0-9]+//' "$results/avc-unexpected.txt" | sort | uniq -c | cut -c1-300
 if [ -n "$discovery" ]; then
 	echo "--- every kind of denial once: source target class { permissions } commands, paths"
