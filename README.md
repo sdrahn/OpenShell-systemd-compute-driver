@@ -122,6 +122,14 @@ the mount points the units bind to (`/.openshell`, `/sandbox`, two
 directories in `/etc/openshell`), which are the paths the stock programs use
 in a container.
 
+## Tests
+
+`make check` runs the unit tests. The functional tests
+(`test/vm/run-tests.sh`) run on an installed system and are shipped as the
+package `openshell-driver-systemd-tests`; [test/openqa](test/openqa/README.md)
+says what they cover and how openQA runs them. `test/vm/run-vm.sh <rpm dir>`
+runs them in a disposable Leap 16 VM, as CI does.
+
 ## Build
 
 `make build` builds the two programs, `make check` runs the format check,

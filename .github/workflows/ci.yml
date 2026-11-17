@@ -83,7 +83,8 @@ jobs:
           path: rpms/*.rpm
 
   # The functional tests on those packages, in a Leap 16 VM with SELinux
-  # enforcing and a stock OpenShell gateway.
+  # enforcing and a stock OpenShell gateway: the script of the tests'
+  # package, as openQA runs it (test/openqa).
   functional:
     needs: package
     runs-on: ubuntu-24.04
@@ -113,6 +114,15 @@ jobs:
           WORK: ${{ runner.temp }}/vm
         run: test/vm/run-vm.sh rpms
       - if: always()
+        name: The results as a test system reads them
+        run: |
+          r=$RUNNER_TEMP/vm/results
+          test -s "$r/results.tap" && test -s "$r/results.xml"
+          head -n 2 "$r/results.tap"
+          echo "ok: $(grep -c '^ok ' "$r/results.tap"), not ok: $(grep -c '^not ok ' "$r/results.tap"), skipped: $(grep -c '# SKIP' "$r/results.tap")"
+          grep -A 20 '^not ok ' "$r/results.tap" || true
+          python3 -c 'import sys, xml.dom.minidom as m; d = m.parse(sys.argv[1]); print("JUnit: %d suites, %d cases" % (len(d.getElementsByTagName("testsuite")), len(d.getElementsByTagName("testcase"))))' "$r/results.xml"
+      - if: always()
         name: What was denied, and the journals
         run: |
           for f in avc.txt helper.journal units.journal user.journal; do
@@ -126,5 +136,6 @@ jobs:
           path: |
             ${{ runner.temp }}/vm/results
             ${{ runner.temp }}/vm/openshell-setup.log
+            ${{ runner.temp }}/vm/install.log
             ${{ runner.temp }}/vm/console.log
           if-no-files-found: ignore

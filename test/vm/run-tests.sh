@@ -3,33 +3,46 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # run-tests.sh: the functional tests of the driver on an installed
-# system: the packages of rpms/ next to this script, a stock OpenShell
-# gateway (openshell-setup.sh), systemd and SELinux. Sandboxes are
-# created, used, stopped, started and deleted through the gateway alone.
+# system: its packages, a stock OpenShell gateway (openshell-setup.sh),
+# systemd and SELinux. Sandboxes are created, used, stopped, started and
+# deleted through the gateway alone. Installed by the package
+# openshell-driver-systemd-tests; test/openqa says how openQA runs it.
 #
-#   run-tests.sh --disposable [--results DIR] [--selinux-discovery]
+#   run-tests.sh --disposable [--results DIR] [--offline]
+#                [--selinux-discovery]
 #
 # It installs packages, switches the gateway to the driver and restarts
 # services, so it refuses to start without --disposable. Each check
 # prints PASS or FAIL; the exit status is 1 if one failed. With
-# --results, the log, the audit log's denials and the journals go to DIR.
+# --results, the log, the audit log's denials and the journals go to DIR,
+# with every check as a result of its own: results.tap (TAP) and
+# results.xml (JUnit, one test suite per section).
+#
+# The packages are expected to be installed, as a test system installs
+# them from its repositories, and OpenShell's gateway to run as a service
+# of a user (openshell-setup.sh next to this script does that).
+#
+# --offline leaves out the checks that reach a host on the Internet (the
+# section "a connection the policy allows"): they are then SKIP.
 #
 # --selinux-discovery is for work on the policy module: the two domains
 # are made permissive and every denial is logged, also those the policy
 # would not log, so that one run shows what a workload needs. The denials
 # are then listed, each kind once, and do not fail the run.
 set -uo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
 user=${OPENSHELL_GATEWAY_USER:-osh}
 disposable=
 results=
 discovery=
+offline=
+usage="usage: $0 --disposable [--results DIR] [--offline] [--selinux-discovery]"
 while [ $# -gt 0 ]; do
 	case $1 in
 	--disposable) disposable=1 ;;
-	--results) results=$2; shift ;;
+	--results) results=${2:?$usage}; shift ;;
+	--offline) offline=1 ;;
 	--selinux-discovery) discovery=1 ;;
-	*) echo "usage: $0 --disposable [--results DIR] [--selinux-discovery]" >&2; exit 2 ;;
+	*) echo "$usage" >&2; exit 2 ;;
 	esac
 	shift
 done
@@ -44,8 +57,21 @@ state=/var/lib/openshell/systemd
 sock=/run/user/$uid/openshell/systemd-driver.sock
 passed=0
 failed=0
+skipped=0
+current="before the first section"
+cases=$results/cases
+rm -rf "$cases"
+mkdir -p "$cases"
 
-section() { printf '\n== %s\n' "$*"; }
+section() {
+	current=$*
+	printf '\n== %s\n' "$*"
+}
+# record STATUS DESCRIPTION [OUTPUT]: one result, for the TAP and JUnit
+# files written at the end.
+record() {
+	printf '%s\n%s\n%s\n%s\n' "$current" "$1" "$2" "${3:-}" >"$cases/$(printf '%05d' $((passed + failed + skipped)))"
+}
 # check DESCRIPTION COMMAND…: PASS if the command succeeds.
 check() {
 	local what=$1 output
@@ -53,11 +79,19 @@ check() {
 	if output=$("$@" 2>&1); then
 		echo "PASS $what"
 		passed=$((passed + 1))
+		record pass "$what"
 	else
 		echo "FAIL $what"
 		echo "$output" | head -n 20 | cut -c1-300 | sed 's/^/     | /'
 		failed=$((failed + 1))
+		record fail "$what" "$(echo "$output" | head -n 40 | cut -c1-500)"
 	fi
+}
+# skip DESCRIPTION REASON: a check that this run leaves out.
+skip() {
+	echo "SKIP $1 ($2)"
+	skipped=$((skipped + 1))
+	record skip "$1" "$2"
 }
 # refuse DESCRIPTION COMMAND…: PASS if the command fails.
 refuse() {
@@ -99,7 +133,8 @@ lacks() { ! grep -E -- "$2" "$1"; }
 inside() { timeout 90 openshell sandbox exec "$1" -- "${@:2}"; }
 
 section "the packages"
-check "the packages install" zypper -n --no-gpg-checks in --no-recommends "$here"/rpms/*.rpm
+check "the driver's package is installed" rpm -q openshell-driver-systemd
+check "the policy module's package is installed" rpm -q openshell-driver-systemd-selinux
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
 	/usr/libexec/openshell/openshell-supervisor-fence \
 	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do
@@ -358,22 +393,30 @@ network_policies:
       - { path: /sandbox/named-curl }
       - { path: /tmp/named-curl }
 POLICY
-check "curl is installed on the host" zypper -n in --no-recommends curl
-check "a sandbox with a network policy is created" timeout 300 openshell sandbox create --name net --policy "$policy" --detach -- sleep 3600
-check "the sandbox with a network policy becomes ready" wait_phase net Ready
-# fetch PROGRAM: the status of a request to the allowed host.
-fetch() { inside net "$1" -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/; }
-echo "curl: $(fetch /usr/bin/curl 2>&1 | tail -n 2 | cut -c1-200)"
-check "the program the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /usr/bin/curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
-refuse "it does not reach a host the policy does not name" inside net /usr/bin/curl -sS -o /dev/null -m 20 https://www.opensuse.org/
-check "copies of the program are made" inside net sh -c 'cp /usr/bin/curl /sandbox/named-curl && cp /usr/bin/curl /sandbox/other-curl && cp /usr/bin/curl /tmp/named-curl'
-echo "a copy the policy does not name: $(fetch /sandbox/other-curl 2>&1 | tail -n 2 | cut -c1-200)"
-refuse "a copy the policy does not name is refused" inside net /sandbox/other-curl -sS -o /dev/null -m 20 https://example.com/
-echo "a copy in the workspace that the policy names: $(fetch /sandbox/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
-check "a copy in the workspace that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /sandbox/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
-echo "a copy in /tmp that the policy names: $(fetch /tmp/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
-check "a copy in /tmp that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /tmp/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
-check "the sandbox with a network policy is deleted" timeout 120 openshell sandbox delete net
+if [ -z "$offline" ]; then
+	check "curl is installed on the host" zypper -n in --no-recommends curl
+	check "a sandbox with a network policy is created" timeout 300 openshell sandbox create --name net --policy "$policy" --detach -- sleep 3600
+	check "the sandbox with a network policy becomes ready" wait_phase net Ready
+	# fetch PROGRAM: the status of a request to the allowed host.
+	fetch() { inside net "$1" -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/; }
+	echo "curl: $(fetch /usr/bin/curl 2>&1 | tail -n 2 | cut -c1-200)"
+	check "the program the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /usr/bin/curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+	refuse "it does not reach a host the policy does not name" inside net /usr/bin/curl -sS -o /dev/null -m 20 https://www.opensuse.org/
+	check "copies of the program are made" inside net sh -c 'cp /usr/bin/curl /sandbox/named-curl && cp /usr/bin/curl /sandbox/other-curl && cp /usr/bin/curl /tmp/named-curl'
+	echo "a copy the policy does not name: $(fetch /sandbox/other-curl 2>&1 | tail -n 2 | cut -c1-200)"
+	refuse "a copy the policy does not name is refused" inside net /sandbox/other-curl -sS -o /dev/null -m 20 https://example.com/
+	echo "a copy in the workspace that the policy names: $(fetch /sandbox/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
+	check "a copy in the workspace that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /sandbox/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+	echo "a copy in /tmp that the policy names: $(fetch /tmp/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
+	check "a copy in /tmp that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /tmp/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+	check "the sandbox with a network policy is deleted" timeout 120 openshell sandbox delete net
+else
+	skip "the program the policy names reaches the host" "--offline"
+	skip "it does not reach a host the policy does not name" "--offline"
+	skip "a copy the policy does not name is refused" "--offline"
+	skip "a copy in the workspace that the policy names reaches the host" "--offline"
+	skip "a copy in /tmp that the policy names reaches the host" "--offline"
+fi
 
 section "two sandboxes"
 check "a second sandbox is created" timeout 300 openshell sandbox create --name second --detach -- sleep 600
@@ -474,5 +517,55 @@ journalctl -u openshell-systemd-helper.service --no-pager -o short-precise >"$re
 journalctl --no-pager -o short-precise _UID="$uid" 2>&1 | grep -v 'podman\|otel.name' | tail -n 400 >"$results/user.journal"
 journalctl --no-pager -o short-precise -b 2>&1 | grep -E 'openshell-sandbox-(netns|supervisor|workload)@|openshell-supervisor\[|openshell-sandbox\[' | tail -n 400 >"$results/units.journal"
 
-printf '\n%d passed, %d failed\n' "$passed" "$failed"
+# Every check as a result of its own, for a test system to read.
+python3 - "$cases" "$results" <<'RESULTS'
+import os, sys
+from xml.sax.saxutils import escape, quoteattr
+
+cases_dir, out = sys.argv[1], sys.argv[2]
+cases = []
+for name in sorted(os.listdir(cases_dir)):
+    with open(os.path.join(cases_dir, name), errors="replace") as f:
+        section, status, what, *detail = f.read().split("\n")
+    cases.append((section, status, what, "\n".join(detail).strip()))
+
+# XML 1.0 has no place for most control characters.
+clean = lambda text: "".join(c for c in text if c in "\t\n" or ord(c) >= 32)
+
+with open(os.path.join(out, "results.tap"), "w") as tap:
+    tap.write("TAP version 13\n1..%d\n" % len(cases))
+    for number, (section, status, what, detail) in enumerate(cases, 1):
+        line = "%s %d - %s: %s" % ("not ok" if status == "fail" else "ok", number, section, what)
+        if status == "skip":
+            line += " # SKIP " + detail
+        tap.write(line.replace("\n", " ") + "\n")
+        if status == "fail":
+            for text in detail.split("\n"):
+                tap.write("# " + text + "\n")
+
+sections = []
+for case in cases:
+    if not sections or sections[-1][0] != case[0]:
+        sections.append((case[0], []))
+    sections[-1][1].append(case)
+with open(os.path.join(out, "results.xml"), "w") as xml:
+    xml.write('<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="openshell-driver-systemd">\n')
+    for section, members in sections:
+        count = lambda status: sum(1 for member in members if member[1] == status)
+        xml.write('  <testsuite name=%s tests="%d" failures="%d" skipped="%d">\n'
+                  % (quoteattr(section), len(members), count("fail"), count("skip")))
+        for _, status, what, detail in members:
+            xml.write('    <testcase classname=%s name=%s' % (quoteattr(section), quoteattr(clean(what))))
+            if status == "pass":
+                xml.write('/>\n')
+            elif status == "skip":
+                xml.write('><skipped message=%s/></testcase>\n' % quoteattr(clean(detail)))
+            else:
+                xml.write('><failure message="failed">%s</failure></testcase>\n' % escape(clean(detail)))
+        xml.write('  </testsuite>\n')
+    xml.write('</testsuites>\n')
+RESULTS
+rm -rf "$cases"
+
+printf '\n%d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"
 [ "$failed" = 0 ]

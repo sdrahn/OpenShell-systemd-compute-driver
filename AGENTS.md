@@ -60,10 +60,15 @@ of rules.
 - Unit tests are Rust tests (`make check`); they need no network once
   the crates are fetched, no systemd and no running gateway.
 - Behaviour on a real system (systemd, the OpenShell gateway, SELinux)
-  is covered by the functional tests in `test/vm/run-tests.sh`, which CI
-  runs in an openSUSE Leap 16 VM on the built packages. A feature that
-  shows on an installed system gets a check there:
-  `check <description> <command…>`, printing PASS or FAIL.
+  is covered by the functional tests in `test/vm/run-tests.sh`. They
+  are shipped as the subpackage `openshell-driver-systemd-tests` and run
+  by openQA (`test/openqa/`); CI runs the same installed script in an
+  openSUSE Leap 16 VM on the built packages. A feature that shows on an
+  installed system gets a check there: `check <description> <command…>`
+  in a `section`, printing PASS, FAIL or SKIP, written as TAP and JUnit
+  with `--results DIR`.
+- A check that needs the Internet is left out with `--offline` and says
+  so with `skip`.
 - The functional tests change the system they run on and refuse to
   start without `--disposable`.
 
