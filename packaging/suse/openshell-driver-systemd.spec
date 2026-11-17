@@ -97,6 +97,8 @@ Requires:       git-core
 Requires:       gzip
 Requires:       iproute2
 Requires:       make
+# A server certificate of a private CA, for the test of the host's trust store.
+Requires:       openssl
 Requires:       policycoreutils
 Requires:       procps
 Requires:       python3

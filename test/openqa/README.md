@@ -14,7 +14,7 @@ installed script, so the two cannot drift apart.
 | `/usr/libexec/openshell-driver-systemd/tests/openshell-version` | the OpenShell release the tests are written for |
 
 It requires `openshell-driver-systemd` and what the tests use: `audit`,
-`curl`, `gcc`, `git-core`, `gzip`, `iproute2`, `make`, `policycoreutils`,
+`curl`, `gcc`, `git-core`, `gzip`, `iproute2`, `make`, `openssl`, `policycoreutils`,
 `procps`, `python3`, `tar` and `util-linux`. It recommends
 `openshell-driver-systemd-selinux`; without the policy module the checks of
 the SELinux domains fail. It also recommends
@@ -68,6 +68,7 @@ zypper -n in openshell-driver-systemd-tests openshell-driver-systemd-selinux
 | what an agent does | git, a C compiler, make, Python, a server on loopback, archives, a script in `/tmp`, reading the host |
 | restarts under a running sandbox | the driver and the gateway restart; the sandbox goes on or comes back |
 | a connection the policy allows | the named program reaches the host and no other; an unnamed copy is refused; named copies in the workspace and `/tmp` reach it |
+| a host with a private CA | an HTTPS server on the host's loopback with a certificate of a private CA in the host's trust store, reached from a sandbox |
 | two sandboxes | different users and categories; one sandbox's user against the other's files and processes; one sandbox's files against the other's categories; the supervisor's fence alone; signals and processes |
 | a workload that dies; stop, start, delete | the gateway learns of it; the workspace is kept; nothing is left |
 | SELinux denials | only those the tests provoke |
