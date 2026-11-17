@@ -117,9 +117,10 @@ Then, with `<user>` the user the OpenShell gateway runs as:
 `openshell gateway info` then names `openshell-driver-systemd` and its
 version.
 
-The helper creates the mount points the units bind to (`/.openshell`,
-`/sandbox`, `/etc/openshell`), which are the paths the stock programs use in
-a container.
+The package's `tmpfiles.d` entry creates the helper's state directory and
+the mount points the units bind to (`/.openshell`, `/sandbox`, two
+directories in `/etc/openshell`), which are the paths the stock programs use
+in a container.
 
 ## Build
 
@@ -132,13 +133,14 @@ promise to keep stable: it is built and tested against that one release.
 Without the package: put `openshell-driver-systemd` in `/usr/bin`, the
 helper and the two stock programs in `/usr/libexec/openshell/`, the units of
 `systemd/` in `/usr/lib/systemd/system/` and of `systemd/user/` in
-`/usr/lib/systemd/user/`, and create the user with
+`/usr/lib/systemd/user/`, `systemd/tmpfiles.d/` in `/usr/lib/tmpfiles.d/`
+(then `systemd-tmpfiles --create`), and create the user with
 `useradd --system --user-group openshell-sandbox`.
 
 ## SELinux
 
 `selinux/` holds an optional policy module with a domain for each of the two
-sandbox units. The units enter the domains through the labels of the two
+sandbox units and one for the helper. The units enter the domains through the labels of the two
 programs, so they need no change, and they start as before on a host
 without the module.
 
@@ -150,6 +152,11 @@ without the module.
   the journal. It cannot signal or trace another domain.
 - `openshell_supervisor_t`, the supervisor: its launch files, its runtime
   directory, the control socket, and the network.
+- `openshell_systemd_helper_t`, the helper: the sandboxes' files, and
+  starting, stopping and asking about the sandbox units and no others. It
+  has no network. It still runs as root and writes drop-ins among systemd's
+  runtime units, so the domain bounds a mistake in the helper; it does not
+  make the helper harmless.
 
 The package loads the module. By hand, with the policy development files of
 the distribution (`selinux-policy-devel`):
@@ -173,7 +180,7 @@ as the same user; with the categories the policy refuses one what is the
 other's, also for a workload that has left its namespaces.
 
 The module was written against the policy of openSUSE Leap 16.0. It does not
-confine the helper or the network namespace's unit.
+confine the network namespace's unit or the driver.
 
 ## Not supported
 
