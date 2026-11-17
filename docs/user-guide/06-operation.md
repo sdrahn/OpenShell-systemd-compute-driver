@@ -30,7 +30,9 @@ systemd-cgls -u openshell-sandbox-workload@<ID>.service     # the workload's pro
 ```
 
 In the other direction, a sandbox's name and OpenShell workspace are in
-`/var/lib/openshell/systemd/<ID>/meta.json`.
+`/var/lib/openshell/systemd/<ID>/meta.json`, and its user ID in the
+file `uid` beside it. `ps -u osb-<UID>` lists everything a sandbox
+runs.
 
 Do not start, stop or restart a sandbox's units by hand. The gateway
 does not learn why, and a start by hand uses launch files whose
@@ -50,6 +52,9 @@ Stopping the supervisor's unit stops the workload's with it
 
 What a workload prints is in its unit's journal: readable by the
 host's administrators, and not sent back to the gateway with an error.
+journald files what a sandbox's two units log under the sandbox's user
+(`journalctl _UID=<UID>`), in a journal file of that user, which it
+keeps within its usual size limits after the sandbox is gone.
 The level of the helper's and the driver's own lines is
 `OPENSHELL_LOG_LEVEL` (`info` by default).
 
@@ -64,13 +69,15 @@ nothing appears in a log.
 | Path | Owner, mode | Seen by |
 |---|---|---|
 | `meta.json` (name, workspace, categories) | root | the helper |
+| `uid` (the sandbox's user ID) | root, 0600 | the helper |
+| `userdb/` (the record that names the sandbox's user) | root | the workload, as `/etc/userdb` |
 | `supervisor.env` (the supervisor's environment) | root, 0600 | systemd |
 | `resolv.conf` | root | the workload, as `/etc/resolv.conf` |
-| `channel/sandbox/` (bootstrap file, TLS identity) | `openshell-sandbox`, 0711 | both; read-only for the supervisor |
+| `channel/sandbox/` (bootstrap file, TLS identity) | the sandbox's user, 0711 | both; read-only for the supervisor |
 | `control/` (the control socket) | root, 1777 | both |
-| `supervisor/` (runtime descriptor, authentication bundle) | `openshell-sandbox`, 0700 | the supervisor |
-| `etc/` (gateway token `sandbox.jwt`, gateway CA `ca.crt`) | `openshell-sandbox`, 0700 | the supervisor |
-| `workspace/` | `openshell-sandbox`, 0700 | the workload, as `/sandbox` |
+| `supervisor/` (runtime descriptor, authentication bundle) | the sandbox's user, 0700 | the supervisor |
+| `etc/` (gateway token `sandbox.jwt`, gateway CA `ca.crt`) | the sandbox's user, 0700 | the supervisor |
+| `workspace/` | the sandbox's user, 0700 | the workload, as `/sandbox` |
 
 `/run/openshell-sandbox/<ID>/` is the supervisor's runtime directory
 (its sockets, its proxy's keys), gone when it stops.
@@ -144,7 +151,8 @@ A sandbox's units are not enabled, so nothing starts them at boot. The
 sandbox's directory, with its workspace and its categories, is on disk
 and stays. When the gateway is up again it starts the sandboxes it
 wants running, each with a new launch, and the helper writes the
-drop-ins in `/run` again.
+drop-ins and the users' names in `/run` again. Until then a stopped
+sandbox's files show its user as a number.
 
 This sequence is not covered by a functional test.
 
@@ -165,7 +173,9 @@ is still there: stop its units and remove the directory as root.
 
 ```shell
 systemctl stop 'openshell-sandbox-*@<ID>.service'
+uid=$(cat /var/lib/openshell/systemd/<ID>/uid)
 rm -rf /var/lib/openshell/systemd/<ID> /run/systemd/system/openshell-sandbox-*@<ID>.service.d
+rm -f /run/userdb/osb-$uid.user /run/userdb/osb-$uid.group /run/userdb/$uid.user /run/userdb/$uid.group
 systemctl daemon-reload
 ```
 
@@ -175,8 +185,8 @@ What is worth keeping is each `workspace/`. Launch files are
 credentials for one launch and are written anew; do not restore them.
 Restore a workspace into a stopped sandbox, with owners and SELinux
 labels as they were (`tar --xattrs --selinux`, `rsync -aAX`): the files
-must be `openshell-sandbox`'s and carry the sandbox's level. Restoring
-has not been tested.
+must be the sandbox's user's (the number in its `uid` file) and carry
+the sandbox's level. Restoring has not been tested.
 
 The driver's own configuration is the two drop-ins of
 [chapter 2](02-installation.md) and the gateway's `gateway.toml`.

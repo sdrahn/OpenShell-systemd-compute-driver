@@ -44,11 +44,13 @@ ID:
 | Unit | Runs | As | Network |
 |---|---|---|---|
 | `openshell-sandbox-netns@ID.service` | holds the sandbox's network namespace | root | a namespace with loopback only |
-| `openshell-sandbox-supervisor@ID.service` | `openshell-supervisor` | `openshell-sandbox` | the host's |
-| `openshell-sandbox-workload@ID.service` | `openshell-sandbox`, which starts the agent | `openshell-sandbox` | the namespace of the unit above |
+| `openshell-sandbox-supervisor@ID.service` | `openshell-supervisor` | the sandbox's user | the host's |
+| `openshell-sandbox-workload@ID.service` | `openshell-sandbox`, which starts the agent | the sandbox's user | the namespace of the unit above |
 
-The workload's root file system is the host's, read-only; a sandbox has
-no image. All its egress goes through its supervisor.
+Every sandbox runs as a host user of its own, which the helper takes
+from a range of user IDs. The workload's root file system is the
+host's, read-only; a sandbox has no image. All its egress goes through
+its supervisor.
 
 The gateway's driver socket accepts only the gateway's own user, who
 cannot start system units, so there are two programs:

@@ -37,8 +37,14 @@ BindPaths=/var/lib/openshell/systemd/%i/workspace:/sandbox
 BindPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
 BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control
 BindReadOnlyPaths=/var/lib/openshell/systemd/%i/resolv.conf:/etc/resolv.conf
-# The name of the sandbox's user, where the host has every sandbox's.
-BindReadOnlyPaths=/var/lib/openshell/systemd/%i/userdb:/run/userdb
+# The name of the sandbox's user: its record alone, in the directory of
+# such records that is under /etc, which a sandbox's policy lets a
+# workload read. The host's own are in /run/userdb, every sandbox's.
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/userdb:/etc/userdb
+# journald keeps a journal file for every user and lets the user read it.
+# A sandbox's holds what its supervisor logged, too: the workload gets no
+# journal.
+InaccessiblePaths=-/var/log/journal
 # Nothing of the host's /run: the sockets of its services are there
 # (D-Bus, the journal), which a network namespace does not keep away, and
 # the supervisors' runtime directories.

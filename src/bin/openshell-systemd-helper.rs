@@ -38,6 +38,7 @@ const MOUNT_POINT_DIRECTORIES: &[&str] = &[
     "/sandbox",
     "/etc/openshell/auth",
     "/etc/openshell/tls/client",
+    "/etc/userdb",
 ];
 const MOUNT_POINT_FILES: &[&str] = &[
     "/etc/openshell/auth/sandbox.jwt",
@@ -856,8 +857,8 @@ impl Helper {
         )
         .map_err(|e| describe("resolv.conf", e))?;
         // The name of the sandbox's user, for the workload: its unit
-        // mounts this in place of the host's directory of such records,
-        // which names every sandbox's.
+        // mounts this over /etc/userdb. The host's directory of such
+        // records names every sandbox's.
         let userdb = dir.join("userdb");
         create_directory(&userdb, 0o755, self.owner_uid, self.owner_gid)
             .and_then(|()| write_userdb(&userdb, uid, self.owner_uid, self.owner_gid))

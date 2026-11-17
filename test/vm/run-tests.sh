@@ -352,7 +352,9 @@ check "it cannot connect to journald" lacks "$r" '^journald: CONNECTED'
 section "through the gateway"
 check "a command runs in the sandbox, as its user" sh -c "timeout 90 openshell sandbox exec $name -- id -u | grep -qx $uid"
 check "the user has its name there" sh -c "timeout 90 openshell sandbox exec $name -- id -un | grep -qx osb-$uid"
-refuse "another sandbox's user has no name there" inside "$name" sh -c 'ls /run/userdb | grep -v "osb-'"$uid"'\.\|^'"$uid"'\." | grep -q .'
+check "the sandbox has its own user's record" inside "$name" test -r "/etc/userdb/osb-$uid.user"
+refuse "and no other's" inside "$name" sh -c 'ls /etc/userdb | grep -v "^osb-'"$uid"'\.\|^'"$uid"'\." | grep -q .'
+refuse "the host's records of every sandbox's user are not there" inside "$name" sh -c 'ls /run/userdb 2>/dev/null | grep -q .'
 check "its name service is the sandbox's" sh -c "timeout 90 openshell sandbox exec $name -- getent hosts example.com"
 check "an image is refused" sh -c "timeout 120 openshell sandbox create --name withimage --from registry.example/image:1 --detach -- true 2>&1 | grep -q 'takes no image'"
 openshell sandbox delete withimage >/dev/null 2>&1
@@ -396,6 +398,9 @@ work "files are found and searched" 'find /usr/share/doc -maxdepth 1 | head -n 3
 # What stays out of reach, as before the work.
 refuse "it still cannot ask systemd for a unit's state" inside "$name" systemctl status openshell-systemd-helper.service
 refuse "it still cannot read the journal" inside "$name" sh -c 'journalctl -n 1 --no-pager 2>/dev/null | grep -q .'
+# journald keeps a file for the sandbox's user and would let it read it.
+check "the host has a journal of the sandbox's user" sh -c "journalctl _UID=$uid -n 1 --no-pager -o cat | grep -q ."
+refuse "the workload does not see the journals' directory" inside "$name" sh -c 'ls /var/log/journal 2>/dev/null | grep -q .'
 
 section "restarts under a running sandbox"
 asuser "systemctl --user restart openshell-driver-systemd.service"

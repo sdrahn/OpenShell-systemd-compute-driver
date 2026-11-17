@@ -337,6 +337,17 @@ allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervi
 # else under /run.
 allow openshell_systemd_helper_t var_run_t:dir { getattr search write add_name remove_name };
 filetrans_pattern(openshell_systemd_helper_t, var_run_t, openshell_sandbox_userdb_t, { file lnk_file })
+# Before it gives a sandbox a user ID, the helper asks whether an account
+# has it. The lookup also tries the sockets of systemd's user database
+# services, which the helper does not need: the accounts those know are
+# outside every range it accepts.
+optional_policy(`
+	gen_require(`
+		type systemd_userdbd_runtime_t;
+	')
+	dontaudit openshell_systemd_helper_t systemd_userdbd_runtime_t:dir { read search open getattr };
+	dontaudit openshell_systemd_helper_t systemd_userdbd_runtime_t:sock_file write;
+')
 files_search_var_lib(openshell_systemd_helper_t)
 seutil_domtrans_setfiles(openshell_systemd_helper_t)
 # The helper's Landlock fence sets "no new privileges", under which

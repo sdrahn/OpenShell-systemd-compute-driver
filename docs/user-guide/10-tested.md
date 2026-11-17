@@ -22,19 +22,22 @@ lists what no test shows.
 | the helper answers the gateway's user, not root, not another user; a path as sandbox ID is refused | 5, 9 | the helper |
 | the mount points exist without the helper making them | 8 | the helper |
 | the driver runs as the gateway user's service; its socket is 0600; the gateway names the driver | 2 | the driver and the gateway |
-| a sandbox becomes ready; three units; users, namespaces (network, process IDs, IPC), domains, categories on processes and files | 1, 5 | a sandbox, the units |
+| a sandbox becomes ready; three units; namespaces (network, process IDs, IPC), domains, categories on processes and files | 1, 5 | a sandbox, the units |
+| a sandbox has a user of its own from the range, not in `/etc/passwd`, known by name on the host and in the sandbox; both units and the sandbox's files are that user's | 1, 3, 5 | the units; what the workload can do; through the gateway |
 | the supervisor's and the workload's units hold no other sandbox's files, no host `/run` | 5 | the units |
 | a workload: no capabilities, no new privileges, seccomp on, loopback only; writes `/sandbox` and `/tmp`, not `/etc` or `/usr`; no `/etc/shadow`, no supervisor files or token; no mount, no namespace; no D-Bus, systemd or journal socket | 3, 5 | what the workload can do |
 | a command runs through the gateway; an image is refused | 3 | through the gateway |
-| git, C compiler, make, Python, loopback servers and low ports, Unix sockets, tar, scripts in `/tmp`, own processes, reading the host; no `systemctl`, no `journalctl` | 3 | what an agent does |
+| git, C compiler, make, Python, loopback servers and low ports, Unix sockets, tar, scripts in `/tmp`, own processes, reading the host; no `systemctl`, no `journalctl`, no journal files | 3 | what an agent does |
 | a restart of the driver leaves a sandbox's processes; after a restart of the gateway the sandbox is ready again | 3, 6 | restarts under a running sandbox |
 | the named program reaches the allowed host; another host is refused; an unnamed copy is refused; named copies in `/sandbox` and `/tmp` reach it | 4 | a connection the policy allows |
 | two sandboxes have different categories; outside the namespaces one's files are refused with the other's categories | 5 | two sandboxes |
-| a supervisor behind its fence cannot read another sandbox's token, workspace or runtime directory; without the fence its user can | 5 | two sandboxes |
+| one sandbox's user, with no namespace, domain or fence in the way, cannot read another's workspace, token or runtime directory, and cannot signal its supervisor or workload, signal 0 included | 5 | two sandboxes |
+| the supervisor's fence alone refuses root another sandbox's token, workspace and runtime directory | 5 | two sandboxes |
 | with another sandbox's categories a real signal to a supervisor is refused; a workload cannot signal or inspect supervisors or the other workload | 5 | two sandboxes |
 | deleting a sandbox removes its files and units | 3, 6 | two sandboxes; stop, start, delete |
 | a killed workload shows as `Error` | 3, 6 | a workload that dies |
-| stop, start: the workspace is kept | 3 | stop, start, delete |
+| stop, start: the workspace is kept and written again, by the same user | 3 | stop, start, delete |
+| a deleted sandbox's user has no name any more | 5, 6 | two sandboxes |
 | nothing was denied by SELinux but what the tests provoke | 5 | SELinux denials |
 
 The guide itself: `tools/check-docs` (in `make check`) holds its
@@ -43,6 +46,8 @@ that mcp-docs serves it from the installed package
 (`test/docs/mcp-docs-smoke.sh`).
 
 Unit tests (`make check`) hold, among others: the form of a sandbox ID,
+that every sandbox gets a user of its own and keeps it, which ranges
+are refused,
 the environment's allowed names and quoting, that a sandbox keeps its
 categories across launches, that the driver has no way in but its
 socket, and what the supervisor's fence leaves out.
@@ -67,8 +72,12 @@ documented behaviour, or as advice:
 - **Limits and drop-ins**: `MemoryMax=`, `CPUQuota=`, a slice for all
   sandboxes, any change to the unit templates
   ([chapter 6](06-operation.md#limits)).
-- **Refusals**: a policy that asks for another user or group (a unit
-  test holds the driver's check; no sandbox is created with one); that
+- **Users**: a range other than the default; a host whose
+  `nsswitch.conf` has no `systemd` (users without names); a range that
+  is used up or holds accounts of a directory service (a unit test
+  holds the helper's choice among free IDs).
+- **Refusals**: a policy that asks for a particular user or group (a
+  unit test holds the driver's check; no sandbox is created with one); that
   a policy cannot widen the unit's read-only mounts; a workload trying
   `sudo`, a pseudo-terminal or `/dev/shm`.
 - **OpenShell's features beyond the tests' scenarios**: providers and

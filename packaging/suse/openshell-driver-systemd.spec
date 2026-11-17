@@ -50,7 +50,7 @@ An external compute driver for the OpenShell gateway. It runs each
 sandbox as systemd units on the gateway's host, without a container
 runtime or a VM: the stock supervisor on the host's network and the
 stock openshell-sandbox in a network namespace with loopback only, both
-as one unprivileged user. The workload uses the host's file system
+as an unprivileged user of the sandbox's own. The workload uses the host's file system
 read-only.
 
 The package holds the driver, its privileged helper, the unit templates,
