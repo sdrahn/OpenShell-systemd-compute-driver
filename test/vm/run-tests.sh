@@ -7,22 +7,29 @@
 # gateway (openshell-setup.sh), systemd and SELinux. Sandboxes are
 # created, used, stopped, started and deleted through the gateway alone.
 #
-#   run-tests.sh --disposable [--results DIR]
+#   run-tests.sh --disposable [--results DIR] [--selinux-discovery]
 #
 # It installs packages, switches the gateway to the driver and restarts
 # services, so it refuses to start without --disposable. Each check
 # prints PASS or FAIL; the exit status is 1 if one failed. With
 # --results, the log, the audit log's denials and the journals go to DIR.
+#
+# --selinux-discovery is for work on the policy module: the two domains
+# are made permissive and every denial is logged, also those the policy
+# would not log, so that one run shows what a workload needs. The denials
+# are then listed, each kind once, and do not fail the run.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 user=${OPENSHELL_GATEWAY_USER:-osh}
 disposable=
 results=
+discovery=
 while [ $# -gt 0 ]; do
 	case $1 in
 	--disposable) disposable=1 ;;
 	--results) results=$2; shift ;;
-	*) echo "usage: $0 --disposable [--results DIR]" >&2; exit 2 ;;
+	--selinux-discovery) discovery=1 ;;
+	*) echo "usage: $0 --disposable [--results DIR] [--selinux-discovery]" >&2; exit 2 ;;
 	esac
 	shift
 done
@@ -98,6 +105,15 @@ check "SELinux is enforcing" sh -c '[ "$(getenforce)" = Enforcing ]'
 check "the policy module is loaded" sh -c 'semodule -l | grep -qx openshell_systemd'
 check "openshell-supervisor has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-supervisor | grep -q openshell_supervisor_exec_t'
 check "openshell-sandbox has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-sandbox | grep -q openshell_sandbox_exec_t'
+# What an agent works with (the section "what an agent does").
+check "the tools of an agent's work install" zypper -n in --no-recommends git-core gcc make python3 tar gzip util-linux iproute2 procps
+if [ -n "$discovery" ]; then
+	echo "SELinux discovery: the two domains are permissive, every denial is logged"
+	zypper -n in --no-recommends policycoreutils-python-utils >/dev/null 2>&1
+	semanage permissive -a openshell_sandbox_t
+	semanage permissive -a openshell_supervisor_t
+	semodule -DB
+fi
 
 section "the helper"
 mkdir -p /etc/systemd/system/openshell-systemd-helper.service.d
@@ -222,6 +238,42 @@ check "its name service is the sandbox's" sh -c "timeout 90 openshell sandbox ex
 check "an image is refused" sh -c "timeout 120 openshell sandbox create --name withimage --from registry.example/image:1 --detach -- true 2>&1 | grep -q 'takes no image'"
 openshell sandbox delete withimage >/dev/null 2>&1
 
+section "what an agent does"
+# Ordinary work of a coding or administration agent, each in a shell of
+# the sandbox. It must work with the policy enforcing, and leave no
+# denial behind (the last section).
+work() { check "$1" inside "$name" bash -c "cd /sandbox && $2"; }
+work "git: a repository, a commit, a log" 'git init -q repo && cd repo && echo hello >file && git add file && git -c user.name=agent -c user.email=agent@example.invalid commit -q -m first && git log --oneline | grep -q first'
+work "git: a diff and a branch" 'cd repo && echo more >>file && git diff --stat | grep -q file && git checkout -q -b topic && git status --short | grep -q file'
+work "a C program is compiled and run" 'printf "#include <stdio.h>\nint main(void){puts(\"built\");return 0;}\n" >hello.c && gcc -o hello hello.c && ./hello | grep -qx built'
+work "make runs a rule" 'printf "all:\n\t@echo made\n" >Makefile && make | grep -qx made'
+work "a Python script reads, computes and writes" 'python3 -c "import json, hashlib, pathlib; pathlib.Path(\"out.json\").write_text(json.dumps({\"sha\": hashlib.sha256(b\"x\").hexdigest()}))" && grep -q sha out.json'
+work "Python starts processes in parallel" 'python3 -c "
+import subprocess, sys
+ps = [subprocess.Popen([sys.executable, \"-c\", \"print(%d * 2)\" % n], stdout=subprocess.PIPE) for n in (1, 2, 3)]
+print(sum(int(p.communicate()[0]) for p in ps))" | grep -qx 12'
+work "Python makes a virtual environment" 'python3 -m venv --without-pip venv && venv/bin/python -c "import sys; print(sys.prefix)" | grep -q /sandbox/venv'
+work "a server on loopback is reached" 'python3 -m http.server 8123 --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8123/file\" if False else \"http://127.0.0.1:8123/\").status)" | grep -qx 200; r=$?; kill %1; exit $r'
+work "a Unix socket in the workspace" 'python3 -c "
+import socket, os
+p = \"/sandbox/test.sock\"
+s = socket.socket(socket.AF_UNIX); s.bind(p); s.listen(1)
+c = socket.socket(socket.AF_UNIX); c.connect(p); a, _ = s.accept()
+c.sendall(b\"ok\"); print(a.recv(2).decode()); os.unlink(p)" | grep -qx ok'
+work "an archive is packed and unpacked" 'tar -czf repo.tar.gz repo && mkdir unpacked && tar -xzf repo.tar.gz -C unpacked && test -f unpacked/repo/file'
+work "temporary files" 't=$(mktemp) && echo x >$t && rm $t && d=$(mktemp -d) && touch $d/f && rm -r $d'
+work "its own processes: list, signal, wait" 'sleep 300 >/dev/null 2>&1 & p=$!; ps -o pid= -p $p | grep -q . && kill $p; wait $p; [ $? = 143 ]'
+work "the host is read: packages, release, kernel" 'rpm -q systemd | grep -q systemd && grep -q openSUSE /etc/os-release && uname -r | grep -q .'
+work "the host is read: processes, memory, disks" 'ps aux | grep -q . && free | grep -q Mem && df / | grep -q /'
+work "the host is read: network state" 'ip -br addr | grep -q lo && ss -ltn >/dev/null'
+work "files are found and searched" 'find /usr/share/doc -maxdepth 1 | head -n 3 | grep -q . && grep -r hello repo/file'
+# Not here: a pseudo-terminal from /dev/ptmx and files in /dev/shm.
+# OpenShell's default sandbox policy withholds both from the workload,
+# whatever this driver or its SELinux module allow.
+# What stays out of reach, as before the work.
+refuse "it still cannot ask systemd for a unit's state" inside "$name" systemctl status openshell-systemd-helper.service
+refuse "it still cannot read the journal" inside "$name" sh -c 'journalctl -n 1 --no-pager 2>/dev/null | grep -q .'
+
 section "restarts under a running sandbox"
 asuser "systemctl --user restart openshell-driver-systemd.service"
 sleep 4
@@ -274,12 +326,30 @@ section "SELinux denials"
 cat /var/log/audit/audit.log* 2>/dev/null | grep 'avc:  denied' >"$results/avc.txt"
 echo "audit records: $(cat /var/log/audit/audit.log* 2>/dev/null | wc -l); denials: $(wc -l <"$results/avc.txt")"
 check "the audit log is being written" sh -c 'cat /var/log/audit/audit.log* | grep -q "type="'
-# The two the workload's report provokes: the system D-Bus socket and
-# journald's.
+# Those the tests provoke: the workload's report tries the system D-Bus
+# socket and journald's, and systemctl in a sandbox tries D-Bus.
 check "the D-Bus attempt was denied by the policy" grep -q 'system_bus_socket.*openshell_sandbox_t' "$results/avc.txt"
-grep -v -E 'comm="python3" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
+grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
 sed -E 's/^.*avc: +denied +//; s/ pid=[0-9]+//; s/ ino=[0-9]+//' "$results/avc-unexpected.txt" | sort | uniq -c | cut -c1-300
-check "nothing else was denied" test ! -s "$results/avc-unexpected.txt"
+if [ -n "$discovery" ]; then
+	echo "--- every kind of denial once: source target class { permissions } commands, paths"
+	python3 -c '
+import re, sys
+seen = {}
+for line in sys.stdin:
+    m = re.search(r"\{ ([^}]*)\}", line)
+    g = lambda k: (re.search(k + r"=(\S+)", line) or [None, "-"])[1]
+    s, t = (g(k).split(":")[2] if g(k) != "-" else "-" for k in ("scontext", "tcontext"))
+    e = seen.setdefault((s, t, g("tclass")), [set(), set(), set()])
+    e[0].update(m.group(1).split() if m else [])
+    e[1].add(g("comm").strip(chr(34)))
+    e[2].add((g("path") if g("path") != "-" else g("name")).strip(chr(34)))
+for (s, t, c), (perms, comms, paths) in sorted(seen.items()):
+    print(s, t, c, "{", " ".join(sorted(perms)), "}", ",".join(sorted(comms))[:80], " ".join(sorted(paths))[:260])
+' <"$results/avc.txt"
+else
+	check "nothing else was denied" test ! -s "$results/avc-unexpected.txt"
+fi
 
 journalctl -u openshell-systemd-helper.service --no-pager -o short-precise >"$results/helper.journal" 2>&1
 journalctl --no-pager -o short-precise _UID="$uid" 2>&1 | grep -v 'podman\|otel.name' | tail -n 400 >"$results/user.journal"
