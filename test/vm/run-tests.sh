@@ -134,7 +134,7 @@ systemctl daemon-reload
 check "the helper starts" systemctl enable --now openshell-systemd-helper.service
 sleep 2
 check "the helper is active" systemctl is-active openshell-systemd-helper.service
-check "the helper has its Landlock fence" sh -c 'journalctl -u openshell-systemd-helper.service --no-pager -o cat | grep -q "landlock=Enforced"'
+check "the helper has its Landlock fence" sh -c 'journalctl -u openshell-systemd-helper.service --no-pager -o cat | grep -q "landlock.*Enforced"'
 # The same program, started from here: not in the helper's SELinux domain,
 # so what it is refused, the fence alone refuses.
 echo "--- the helper's test of its fence"

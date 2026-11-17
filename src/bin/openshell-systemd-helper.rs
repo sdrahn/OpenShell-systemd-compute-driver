@@ -123,7 +123,6 @@ fn fence(state_dir: &Path, socket: &Path) -> Fence {
             "/proc",
             "/sys",
             "/run",
-            "/var/lib/selinux",
             "/var/log/journal",
             "/.openshell",
             "/sandbox",
