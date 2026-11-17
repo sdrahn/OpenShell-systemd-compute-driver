@@ -327,6 +327,50 @@ for _ in $(seq 30); do openshell status >/dev/null 2>&1 && break; sleep 2; done
 check "the sandbox is ready after the gateway restarted" wait_phase "$name" Ready
 check "a command runs after the gateway restarted" inside "$name" id
 
+section "a connection the policy allows"
+# A sandbox whose policy lets one program reach one host. The way there is
+# the supervisor's: its proxy, its name service, the certificate authority
+# it gives the workload, and how it tells which program is asking.
+policy=$results/net-policy.yaml
+cat >"$policy" <<'POLICY'
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+network_policies:
+  example:
+    name: example-read-only
+    endpoints:
+      - host: example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /sandbox/named-curl }
+      - { path: /tmp/named-curl }
+POLICY
+check "curl is installed on the host" zypper -n in --no-recommends curl
+check "a sandbox with a network policy is created" timeout 300 openshell sandbox create --name net --policy "$policy" --detach -- sleep 3600
+check "the sandbox with a network policy becomes ready" wait_phase net Ready
+# fetch PROGRAM: the status of a request to the allowed host.
+fetch() { inside net "$1" -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/; }
+echo "curl: $(fetch /usr/bin/curl 2>&1 | tail -n 2 | cut -c1-200)"
+check "the program the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /usr/bin/curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+refuse "it does not reach a host the policy does not name" inside net /usr/bin/curl -sS -o /dev/null -m 20 https://www.opensuse.org/
+check "copies of the program are made" inside net sh -c 'cp /usr/bin/curl /sandbox/named-curl && cp /usr/bin/curl /sandbox/other-curl && cp /usr/bin/curl /tmp/named-curl'
+echo "a copy the policy does not name: $(fetch /sandbox/other-curl 2>&1 | tail -n 2 | cut -c1-200)"
+refuse "a copy the policy does not name is refused" inside net /sandbox/other-curl -sS -o /dev/null -m 20 https://example.com/
+echo "a copy in the workspace that the policy names: $(fetch /sandbox/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
+check "a copy in the workspace that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /sandbox/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+echo "a copy in /tmp that the policy names: $(fetch /tmp/named-curl 2>&1 | tail -n 2 | cut -c1-200)"
+check "a copy in /tmp that the policy names reaches the host" sh -c "timeout 90 openshell sandbox exec net -- /tmp/named-curl -sS -o /dev/null -m 30 -w '%{http_code}' https://example.com/ | grep -qx 200"
+check "the sandbox with a network policy is deleted" timeout 120 openshell sandbox delete net
+
 section "two sandboxes"
 check "a second sandbox is created" timeout 300 openshell sandbox create --name second --detach -- sleep 600
 check "the second sandbox becomes ready" wait_phase second Ready
