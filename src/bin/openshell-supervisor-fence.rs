@@ -58,6 +58,10 @@ fn fence(runtime_dir: &Path) -> Fence {
         // Where /etc/resolv.conf points on the hosts this is for.
         "/run/netconfig",
         "/run/systemd/resolve",
+        // Where the host's CA certificates are on SUSE systems:
+        // /etc/ssl/ca-bundle.pem and /etc/ssl/certs point here. The
+        // supervisor verifies the hosts a sandbox reaches with them.
+        "/var/lib/ca-certificates",
         // The names of the sandboxes' users.
         "/run/userdb",
     ]);
@@ -132,6 +136,17 @@ mod tests {
             assert_ne!(path, Path::new("/"), "{path:?}");
         }
         assert!(!fence.no_tcp);
+    }
+
+    #[test]
+    fn the_fence_lets_the_supervisor_read_the_host_s_ca_certificates() {
+        let fence = fence(Path::new("/run/openshell-sandbox/one"));
+        assert!(fence.read.contains(&PathBuf::from("/etc")));
+        assert!(
+            fence
+                .read
+                .contains(&PathBuf::from("/var/lib/ca-certificates"))
+        );
     }
 
     #[test]
