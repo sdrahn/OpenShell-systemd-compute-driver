@@ -113,8 +113,9 @@ The templates in `/usr/lib/systemd/system` are the package's and are
 replaced on an update. Change them with drop-ins (`systemctl edit`),
 which are yours and stay.
 
-- Adding restrictions is safe to try: `MemoryMax=`, `IPAddressDeny=` for
-  the supervisor, `ProtectKernelTunables=`.
+- Adding restrictions is safe to try: `MemoryMax=`,
+  `ProtectKernelTunables=`, `ProtectKernelModules=`. A sandbox that
+  then does not start says why in its unit's journal.
 - **Do not** remove `PrivateNetwork=`, `PrivatePIDs=`, `PrivateIPC=`,
   `NoNewPrivileges=`, the empty `CapabilityBoundingSet=` or the
   `TemporaryFileSystem=` lines: each is a wall of
