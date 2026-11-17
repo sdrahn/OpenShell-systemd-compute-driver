@@ -75,15 +75,45 @@ struct Args {
     log_level: String,
 }
 
+/// A sandbox's pair of `SELinux` categories, two of `c0` to `c1023`. Its
+/// supervisor, its workload and its files carry them, so that the policy
+/// refuses one sandbox what is another's even where the namespaces and
+/// file modes would not: every sandbox runs in the same domain and as the
+/// same user.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+struct Categories(u16, u16);
+
+impl Categories {
+    const COUNT: u16 = 1024;
+
+    fn level(self) -> String {
+        format!("s0:c{},c{}", self.0, self.1)
+    }
+}
+
 /// What the helper keeps of a sandbox besides its launch files.
 #[derive(Debug, Deserialize, Serialize)]
 struct Metadata {
     name: String,
     workspace: String,
+    /// Kept for the sandbox's life: its workspace carries them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    categories: Option<Categories>,
 }
+
+/// The units that run in a domain of the policy module, and the domain.
+const CONFINED_UNITS: &[(&str, &str)] = &[
+    ("supervisor", "openshell_supervisor_t"),
+    ("workload", "openshell_sandbox_t"),
+];
 
 struct Helper {
     state_dir: PathBuf,
+    /// Where a sandbox's units get their drop-ins: systemd's runtime
+    /// directory for units.
+    unit_dir: PathBuf,
+    /// Whether the policy module is in use, and sandboxes get categories.
+    categories: bool,
     /// The owner of what only the helper and systemd read: root.
     owner_uid: u32,
     owner_gid: u32,
@@ -150,6 +180,40 @@ fn relabel(arguments: &[&std::ffi::OsStr]) -> std::result::Result<(), String> {
     }
 }
 
+/// Whether the policy module labels the programs: then the units run in
+/// its domains, and a sandbox gets categories. `stat` prints a file's
+/// `SELinux` context with `%C`.
+fn policy_module_in_use() -> bool {
+    if !Path::new("/sys/fs/selinux/enforce").exists() {
+        return false;
+    }
+    std::process::Command::new("stat")
+        .args(["-c", "%C", "/usr/libexec/openshell/openshell-sandbox"])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout).contains(":openshell_sandbox_exec_t:")
+        })
+}
+
+/// Gives files a level, as `chcon -l` does.
+fn set_level(level: &str, recursive: bool, paths: &[PathBuf]) -> std::result::Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut command = std::process::Command::new("chcon");
+    if recursive {
+        command.arg("-R");
+    }
+    match command.args(["-l", level]).args(paths).output() {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(format!(
+            "chcon: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(error) => Err(format!("chcon: {error}")),
+    }
+}
+
 /// The two units' states as systemd names them, as one state.
 fn unit_state(supervisor: &str, workload: &str) -> UnitState {
     let transitioning = |state: &str| matches!(state, "activating" | "deactivating" | "reloading");
@@ -177,15 +241,130 @@ impl Helper {
         serde_json::from_slice(&encoded).ok()
     }
 
+    /// The categories of every sandbox but one.
+    fn categories_in_use(&self, except: &str) -> std::collections::HashSet<Categories> {
+        std::fs::read_dir(&self.state_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|sandbox_id| sandbox_id != except)
+            .filter_map(|sandbox_id| self.metadata(&sandbox_id)?.categories)
+            .collect()
+    }
+
+    /// A sandbox's categories: those it has, or a pair no other sandbox has.
+    fn categories_of(&self, sandbox_id: &str) -> std::result::Result<Categories, String> {
+        if let Some(categories) = self
+            .metadata(sandbox_id)
+            .and_then(|metadata| metadata.categories)
+        {
+            return Ok(categories);
+        }
+        let in_use = self.categories_in_use(sandbox_id);
+        for _ in 0..1000 {
+            let random = openshell_crypto::random_bytes::<4>()
+                .map_err(|error| format!("choose categories: {error}"))?;
+            let first = u16::from_le_bytes([random[0], random[1]]) % Categories::COUNT;
+            let second = u16::from_le_bytes([random[2], random[3]]) % Categories::COUNT;
+            let categories = Categories(first.min(second), first.max(second));
+            if first != second && !in_use.contains(&categories) {
+                return Ok(categories);
+            }
+        }
+        Err("no free pair of categories".to_string())
+    }
+
+    /// Gives a sandbox's files its level. The workspace's own files have it
+    /// from the workload that made them; they are gone through only when
+    /// the workspace's directory does not have it yet.
+    fn label_files(
+        &self,
+        sandbox_id: &str,
+        categories: Categories,
+    ) -> std::result::Result<(), String> {
+        let dir = self.sandbox_dir(sandbox_id);
+        let workspace = dir.join("workspace");
+        let level = categories.level();
+        let labelled = std::process::Command::new("stat")
+            .args(["-c", "%C"])
+            .arg(&workspace)
+            .output()
+            .is_ok_and(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .ends_with(&level)
+            });
+        let others: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|error| format!("read {}: {error}", dir.display()))?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| *path != workspace)
+            .collect();
+        set_level(&level, false, std::slice::from_ref(&dir))?;
+        set_level(&level, true, &others)?;
+        set_level(&level, !labelled, &[workspace])
+    }
+
+    fn drop_in(&self, kind: &str, sandbox_id: &str) -> PathBuf {
+        self.unit_dir.join(format!("{}.d", unit(kind, sandbox_id)))
+    }
+
+    /// Writes the drop-ins that start a sandbox's units at its level.
+    /// Returns whether systemd has to read its units again.
+    fn write_drop_ins(
+        &self,
+        sandbox_id: &str,
+        categories: Categories,
+    ) -> std::result::Result<bool, String> {
+        let mut changed = false;
+        for (kind, domain) in CONFINED_UNITS {
+            let dir = self.drop_in(kind, sandbox_id);
+            let file = dir.join("50-selinux.conf");
+            let content = format!(
+                "[Service]\nSELinuxContext=system_u:system_r:{domain}:{}\n",
+                categories.level()
+            );
+            if std::fs::read_to_string(&file).is_ok_and(|current| current == content) {
+                continue;
+            }
+            std::fs::create_dir_all(&dir)
+                .and_then(|()| std::fs::write(&file, content))
+                .map_err(|error| format!("write {}: {error}", file.display()))?;
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    /// Removes a sandbox's drop-ins. Returns whether there were any.
+    fn remove_drop_ins(&self, sandbox_id: &str) -> bool {
+        // Every one of them, also after the first that was there.
+        let mut any = false;
+        for (kind, _) in CONFINED_UNITS {
+            any |= std::fs::remove_dir_all(self.drop_in(kind, sandbox_id)).is_ok();
+        }
+        any
+    }
+
     /// Writes one launch's files. Everything of an earlier launch but the
     /// workspace is removed first; the files are created, never opened, so
-    /// nothing that was there can be written through.
-    fn write_launch_files(&self, provision: &Provision) -> std::result::Result<(), String> {
+    /// nothing that was there can be written through. Returns the
+    /// sandbox's categories, where the policy module is in use.
+    fn write_launch_files(
+        &self,
+        provision: &Provision,
+    ) -> std::result::Result<Option<Categories>, String> {
         let describe = |what: &str, error: std::io::Error| format!("{what}: {error}");
         let environment = envfile::render(&provision.environment).map_err(|e| e.to_string())?;
+        let categories = if self.categories {
+            Some(self.categories_of(&provision.sandbox_id)?)
+        } else {
+            None
+        };
         let metadata = serde_json::to_vec(&Metadata {
             name: provision.name.clone(),
             workspace: provision.workspace.clone(),
+            categories,
         })
         .map_err(|error| error.to_string())?;
         let (uid, gid) = (self.workload_uid, self.workload_gid);
@@ -287,7 +466,8 @@ impl Helper {
             self.owner_uid,
             self.owner_gid,
         )
-        .map_err(|e| describe("meta.json", e))
+        .map_err(|e| describe("meta.json", e))?;
+        Ok(categories)
     }
 
     async fn systemctl(arguments: &[&str]) -> std::result::Result<String, String> {
@@ -405,14 +585,18 @@ impl Helper {
                 // only its directory is labelled.
                 let dir = self.sandbox_dir(&provision.sandbox_id);
                 let workspace = dir.join("workspace");
-                let written = self.write_launch_files(&provision).and_then(|()| {
+                let written = self.write_launch_files(&provision).and_then(|categories| {
                     relabel(&[
                         "-R".as_ref(),
                         "-e".as_ref(),
                         workspace.as_os_str(),
                         dir.as_os_str(),
                     ])?;
-                    relabel(&[workspace.as_os_str()])
+                    relabel(&[workspace.as_os_str()])?;
+                    // restorecon sets the type and leaves the level.
+                    categories.map_or(Ok(()), |categories| {
+                        self.label_files(&provision.sandbox_id, categories)
+                    })
                 });
                 match written {
                     Ok(()) => Response::Done,
@@ -422,8 +606,20 @@ impl Helper {
                 }
             }
             Request::Start { sandbox_id } => {
-                if self.metadata(&sandbox_id).is_none() {
+                let Some(metadata) = self.metadata(&sandbox_id) else {
                     return Response::NotFound;
+                };
+                // The drop-ins are gone after a reboot: every start writes
+                // what is missing.
+                if let Some(categories) = metadata.categories {
+                    let reload = match self.write_drop_ins(&sandbox_id, categories) {
+                        Ok(false) => Ok(String::new()),
+                        Ok(true) => Self::systemctl(&["daemon-reload"]).await,
+                        Err(message) => Err(message),
+                    };
+                    if let Err(message) = reload {
+                        return Response::Error { message };
+                    }
                 }
                 // The workload's unit requires the namespace's and the
                 // supervisor's.
@@ -448,6 +644,10 @@ impl Helper {
                     return Response::NotFound;
                 }
                 Self::stop_units(&sandbox_id).await;
+                if self.remove_drop_ins(&sandbox_id) {
+                    // Only tidying: the units are stopped and their files go.
+                    let _ = Self::systemctl(&["daemon-reload"]).await;
+                }
                 match std::fs::remove_dir_all(&dir) {
                     Ok(()) => Response::Done,
                     Err(error) => Response::Error {
@@ -575,8 +775,11 @@ async fn main() -> Result<()> {
     ])
     .map_err(|message| miette!("{message}"))?;
     relabel(&[args.state_dir.as_os_str()]).map_err(|message| miette!("{message}"))?;
+    let categories = policy_module_in_use();
     let helper = Helper {
         state_dir: args.state_dir,
+        unit_dir: PathBuf::from("/run/systemd/system"),
+        categories,
         owner_uid: 0,
         owner_gid: 0,
         workload_uid: workload.uid.as_raw(),
@@ -587,6 +790,7 @@ async fn main() -> Result<()> {
         socket = %args.socket.display(),
         allow_user = %args.allow_user,
         workload_user = %args.workload_user,
+        selinux_categories = categories,
         "Starting systemd helper"
     );
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -632,6 +836,8 @@ mod tests {
         // Tests do not run as root: everything is the test's own.
         Helper {
             state_dir: state_dir.to_path_buf(),
+            unit_dir: state_dir.join("units"),
+            categories: false,
             owner_uid: nix::unistd::geteuid().as_raw(),
             owner_gid: nix::unistd::getegid().as_raw(),
             workload_uid: nix::unistd::geteuid().as_raw(),
@@ -767,6 +973,84 @@ mod tests {
             std::fs::read_to_string(state.path().join(ID).join("etc/sandbox.jwt")).expect("token"),
             "token-one"
         );
+    }
+
+    const OTHER_ID: &str = "0b0e0f52-6a57-4b3c-9d0e-6f1f1f7a2c11";
+
+    #[test]
+    fn a_sandbox_keeps_its_categories_and_shares_them_with_no_other() {
+        let state = tempfile::tempdir().expect("state directory");
+        let mut helper = helper(state.path());
+        helper.categories = true;
+        for id in [ID, OTHER_ID] {
+            std::fs::create_dir(state.path().join(id)).expect("sandbox directory");
+        }
+        let mut other = provision("token-two");
+        other.sandbox_id = OTHER_ID.to_string();
+
+        let first = helper
+            .write_launch_files(&provision("token-one"))
+            .expect("first launch")
+            .expect("categories");
+        let second = helper
+            .write_launch_files(&other)
+            .expect("the other sandbox")
+            .expect("categories");
+        let again = helper
+            .write_launch_files(&provision(""))
+            .expect("second launch")
+            .expect("categories");
+
+        assert_eq!(first, again);
+        assert_ne!(first, second);
+        assert!(first.0 < first.1 && first.1 < Categories::COUNT);
+        assert_eq!(
+            helper.metadata(ID).expect("metadata").categories,
+            Some(first)
+        );
+        assert_eq!(first.level(), format!("s0:c{},c{}", first.0, first.1));
+    }
+
+    #[test]
+    fn without_the_policy_module_a_sandbox_has_no_categories() {
+        let state = tempfile::tempdir().expect("state directory");
+        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        let helper = helper(state.path());
+        let categories = helper
+            .write_launch_files(&provision("token-one"))
+            .expect("launch");
+        assert_eq!(categories, None);
+        let metadata =
+            std::fs::read_to_string(state.path().join(ID).join("meta.json")).expect("metadata");
+        assert!(!metadata.contains("categories"), "{metadata}");
+    }
+
+    #[test]
+    fn metadata_from_before_categories_is_still_read() {
+        let metadata: Metadata =
+            serde_json::from_str(r#"{"name":"one","workspace":"default"}"#).expect("metadata");
+        assert_eq!(metadata.categories, None);
+    }
+
+    #[test]
+    fn drop_ins_start_both_units_at_the_sandbox_level() {
+        let state = tempfile::tempdir().expect("state directory");
+        let helper = helper(state.path());
+        let categories = Categories(7, 512);
+
+        assert!(helper.write_drop_ins(ID, categories).expect("written"));
+        assert!(!helper.write_drop_ins(ID, categories).expect("unchanged"));
+        for (kind, domain) in CONFINED_UNITS {
+            let file = helper.unit_dir.join(format!(
+                "openshell-sandbox-{kind}@{ID}.service.d/50-selinux.conf"
+            ));
+            assert_eq!(
+                std::fs::read_to_string(file).expect("drop-in"),
+                format!("[Service]\nSELinuxContext=system_u:system_r:{domain}:s0:c7,c512\n")
+            );
+        }
+        assert!(helper.remove_drop_ins(ID));
+        assert!(!helper.remove_drop_ins(ID));
     }
 
     #[test]

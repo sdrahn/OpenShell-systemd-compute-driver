@@ -165,9 +165,15 @@ The helper runs `restorecon` on the files it writes for a launch, because a
 new file takes its directory's label and the domains tell a sandbox's files
 apart by label. A workspace's own files keep the labels they were made with.
 
+Every sandbox also gets a pair of categories of its own, as a container
+does. The helper chooses the pair, keeps it for the sandbox's life, gives
+the sandbox's files that level and writes drop-ins in `/run/systemd/system`
+that start its two units with it. Two sandboxes run in the same domains and
+as the same user; with the categories the policy refuses one what is the
+other's, also for a workload that has left its namespaces.
+
 The module was written against the policy of openSUSE Leap 16.0. It does not
-confine the helper or the network namespace's unit, and all sandboxes share
-one domain: the namespaces keep one sandbox from another, not the policy.
+confine the helper or the network namespace's unit.
 
 ## Not supported
 
