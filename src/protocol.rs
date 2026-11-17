@@ -19,8 +19,12 @@ pub const MAX_MESSAGE_BYTES: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Request {
-    /// The helper's version and the identity its workloads run as.
+    /// The helper's version and the range its sandboxes' users are from.
     Describe,
+    /// The user of one sandbox: the one it has, or one no other sandbox
+    /// and no account of the host has. The driver asks before it builds a
+    /// launch's files, which name the user.
+    Reserve { sandbox_id: String },
     /// Write one sandbox's launch files. Its units are stopped first.
     Provision(Box<Provision>),
     /// Start the sandbox's units.
@@ -106,7 +110,13 @@ pub enum Response {
     Done,
     Described {
         version: String,
-        /// The host user and group every workload and supervisor runs as.
+        /// The user IDs sandboxes are given, first and last.
+        first_uid: u32,
+        last_uid: u32,
+    },
+    /// The host user and group one sandbox's supervisor and workload run
+    /// as, and no other sandbox's.
+    Reserved {
         uid: u32,
         gid: u32,
     },
@@ -156,6 +166,9 @@ mod tests {
             Request::Describe,
             Request::List,
             Request::Start {
+                sandbox_id: "d6ac9d5f-60aa-4fcb-b050-9a0a4b134205".into(),
+            },
+            Request::Reserve {
                 sandbox_id: "d6ac9d5f-60aa-4fcb-b050-9a0a4b134205".into(),
             },
         ] {

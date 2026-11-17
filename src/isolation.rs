@@ -63,8 +63,8 @@ struct SystemdOuterFenceEvidence<'a> {
     interfaces: &'static [&'static str],
 }
 
-/// The identity every workload of this host runs as: the helper's
-/// configured user, which is never root.
+/// The identity one sandbox's workload runs as: the user the helper
+/// reserved for it, which is never root and no other sandbox's.
 pub fn workload_identity(
     uid: u32,
     gid: u32,

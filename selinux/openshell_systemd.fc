@@ -17,6 +17,8 @@
 /var/lib/openshell/systemd/[^/]+/etc(/.*)?		gen_context(system_u:object_r:openshell_supervisor_conf_t,s0)
 /var/lib/openshell/systemd/[^/]+/channel(/.*)?		gen_context(system_u:object_r:openshell_sandbox_channel_t,s0)
 /var/lib/openshell/systemd/[^/]+/control(/.*)?		gen_context(system_u:object_r:openshell_sandbox_channel_t,s0)
+/var/lib/openshell/systemd/[^/]+/userdb(/.*)?		gen_context(system_u:object_r:openshell_sandbox_userdb_t,s0)
+/run/userdb/osb-[0-9]+\.(user|group)		--	gen_context(system_u:object_r:openshell_sandbox_userdb_t,s0)
 /var/lib/openshell/systemd/[^/]+/workspace(/.*)?	gen_context(system_u:object_r:openshell_sandbox_workspace_t,s0)
 
 /run/openshell-sandbox(/.*)?				gen_context(system_u:object_r:openshell_supervisor_runtime_t,s0)

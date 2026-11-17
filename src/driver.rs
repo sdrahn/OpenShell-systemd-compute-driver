@@ -21,7 +21,6 @@ use openshell_core::proto::compute::v1::{
     ResourceCapabilities, WatchSandboxesDeletedEvent, WatchSandboxesEvent,
     WatchSandboxesSandboxEvent, watch_sandboxes_event,
 };
-use openshell_isolation_interface::contract::ResolvedWorkloadIdentity;
 use tracing::{debug, info, warn};
 
 use crate::config::SystemdComputeConfig;
@@ -46,7 +45,6 @@ pub type WatchStream =
 pub struct SystemdComputeDriver {
     config: Arc<SystemdComputeConfig>,
     helper: HelperClient,
-    identity: ResolvedWorkloadIdentity,
     events: tokio::sync::broadcast::Sender<WatchSandboxesEvent>,
     /// What the watch last reported for each sandbox.
     observed: Arc<Mutex<HashMap<String, SandboxRecord>>>,
@@ -117,24 +115,20 @@ fn driver_sandbox(record: &SandboxRecord) -> DriverSandbox {
     }
 }
 
-/// Refuses a requested workload user or group other than the one every
-/// workload of this host runs as. `sandbox` names it, as it names the
-/// image's sandbox account for the container drivers.
-fn check_identity_request(
-    user: &str,
-    group: &str,
-    identity: &ResolvedWorkloadIdentity,
-) -> Result<(), ComputeDriverError> {
-    let matches = |requested: &str, id: u32| {
+/// Refuses a requested workload user or group. Every sandbox gets a user
+/// of its own, which the helper chooses: a request cannot name one.
+/// `sandbox` names it, as it names the image's sandbox account for the
+/// container drivers.
+fn check_identity_request(user: &str, group: &str) -> Result<(), ComputeDriverError> {
+    let own = |requested: &str| {
         let requested = requested.trim();
-        requested.is_empty() || requested == "sandbox" || requested.parse() == Ok(id)
+        requested.is_empty() || requested == "sandbox"
     };
-    if matches(user, identity.uid) && matches(group, identity.gid) {
+    if own(user) && own(group) {
         Ok(())
     } else {
         Err(ComputeDriverError::InvalidArgument(format!(
-            "the systemd compute driver runs every workload as {}:{} and cannot run one as {user:?}:{group:?}",
-            identity.uid, identity.gid
+            "the systemd compute driver gives every sandbox a user of its own and cannot run one as {user:?}:{group:?}"
         )))
     }
 }
@@ -150,26 +144,28 @@ fn check_sandbox_id(sandbox_id: &str) -> Result<(), ComputeDriverError> {
 }
 
 impl SystemdComputeDriver {
-    /// Connects to the helper and learns the identity workloads run as.
+    /// Connects to the helper, which must be there and of this version's
+    /// protocol.
     pub async fn new(config: SystemdComputeConfig) -> Result<Self, ComputeDriverError> {
         let helper = HelperClient::new(config.helper_socket.clone());
-        let (uid, gid) = match helper.call(&Request::Describe).await? {
-            Response::Described { version, uid, gid } => {
-                info!(helper_version = %version, uid, gid, "Connected to the systemd helper");
-                (uid, gid)
+        match helper.call(&Request::Describe).await? {
+            Response::Described {
+                version,
+                first_uid,
+                last_uid,
+            } => {
+                info!(helper_version = %version, first_uid, last_uid, "Connected to the systemd helper");
             }
             other => {
                 return Err(ComputeDriverError::Message(format!(
                     "systemd helper: unexpected answer {other:?}"
                 )));
             }
-        };
-        let identity = crate::isolation::workload_identity(uid, gid)?;
+        }
         let (events, _) = tokio::sync::broadcast::channel(256);
         let driver = Self {
             config: Arc::new(config),
             helper,
-            identity,
             events,
             observed: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -226,7 +222,7 @@ impl SystemdComputeDriver {
             .as_ref()
             .and_then(|spec| spec.workload_identity.as_ref())
             .map_or(Ok(()), |request| {
-                check_identity_request(&request.user, &request.group, &self.identity)
+                check_identity_request(&request.user, &request.group)
             })
     }
 
@@ -258,10 +254,26 @@ impl SystemdComputeDriver {
             })?,
             None => String::new(),
         };
+        // The sandbox's own user: the one it has from an earlier launch,
+        // or a new one. The launch files name it.
+        let identity = match self
+            .helper
+            .call(&Request::Reserve {
+                sandbox_id: sandbox.id.clone(),
+            })
+            .await?
+        {
+            Response::Reserved { uid, gid } => crate::isolation::workload_identity(uid, gid)?,
+            other => {
+                return Err(ComputeDriverError::Message(format!(
+                    "systemd helper: unexpected answer {other:?}"
+                )));
+            }
+        };
         let provision = crate::isolation::provision(
             sandbox,
             &self.config,
-            &self.identity,
+            &identity,
             &launch_authentication,
             gateway_ca,
         )?;
@@ -560,16 +572,10 @@ mod tests {
     }
 
     #[test]
-    fn only_the_hosts_workload_identity_can_be_requested() {
-        let identity = crate::isolation::workload_identity(473, 474).expect("identity");
-        for (user, group) in [
-            ("", ""),
-            ("sandbox", "sandbox"),
-            ("473", "474"),
-            (" 473 ", ""),
-        ] {
+    fn a_request_cannot_name_the_sandboxes_user() {
+        for (user, group) in [("", ""), ("sandbox", "sandbox"), (" sandbox ", "")] {
             assert!(
-                check_identity_request(user, group, &identity).is_ok(),
+                check_identity_request(user, group).is_ok(),
                 "{user:?}:{group:?}"
             );
         }
@@ -578,11 +584,11 @@ mod tests {
             ("", "1000"),
             ("root", ""),
             ("0", "0"),
-            ("474", "473"),
+            ("70000", "70000"),
         ] {
             assert!(
                 matches!(
-                    check_identity_request(user, group, &identity),
+                    check_identity_request(user, group),
                     Err(ComputeDriverError::InvalidArgument(_))
                 ),
                 "{user:?}:{group:?}"

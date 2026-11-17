@@ -32,6 +32,8 @@ policy_module(openshell_systemd, 1.0.0)
 # their namespaces, is the pair of categories each has.
 
 gen_require(`
+	attribute domain;
+	type var_run_t;
 	type init_t;
 	type systemd_unit_file_t;
 	type setfiles_t;
@@ -107,6 +109,13 @@ files_mountpoint(openshell_sandbox_channel_t)
 type openshell_sandbox_workspace_t;
 files_type(openshell_sandbox_workspace_t)
 files_mountpoint(openshell_sandbox_workspace_t)
+
+# The names of the sandboxes' users: records that systemd's user database
+# reads, in /run/userdb for the host and in a sandbox's directory for its
+# workload. What they say is as public as the users' file.
+type openshell_sandbox_userdb_t;
+files_type(openshell_sandbox_userdb_t)
+files_mountpoint(openshell_sandbox_userdb_t)
 
 # A supervisor's runtime directory.
 type openshell_supervisor_runtime_t;
@@ -298,6 +307,13 @@ allow openshell_sandbox_t openshell_supervisor_t:fd use;
 allow openshell_supervisor_t openshell_sandbox_t:fd use;
 
 ########################################
+# The names of the sandboxes' users, for whoever looks a user up.
+
+allow domain openshell_sandbox_userdb_t:dir list_dir_perms;
+allow domain openshell_sandbox_userdb_t:file read_file_perms;
+allow domain openshell_sandbox_userdb_t:lnk_file read_lnk_file_perms;
+
+########################################
 # The helper
 
 allow openshell_systemd_helper_t self:capability { chown dac_override dac_read_search fowner fsetid };
@@ -314,8 +330,13 @@ files_search_pids(openshell_systemd_helper_t)
 # The sandboxes' files: it writes a launch's, gives them the sandbox's
 # level (chcon; the type is restorecon's, in its own domain), and removes
 # a sandbox's, the workspace with what the workload left in it.
-allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:dir { manage_dir_perms relabelfrom relabelto };
-allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:{ file lnk_file fifo_file sock_file } { manage_file_perms relabelfrom relabelto };
+allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t openshell_sandbox_userdb_t }:dir { manage_dir_perms relabelfrom relabelto };
+allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t openshell_sandbox_userdb_t }:{ file lnk_file fifo_file sock_file } { manage_file_perms relabelfrom relabelto };
+# The names of the sandboxes' users for the host, in /run/userdb: what
+# the helper makes there gets the records' type, and it writes nothing
+# else under /run.
+allow openshell_systemd_helper_t var_run_t:dir { getattr search write add_name remove_name };
+filetrans_pattern(openshell_systemd_helper_t, var_run_t, openshell_sandbox_userdb_t, { file lnk_file })
 files_search_var_lib(openshell_systemd_helper_t)
 seutil_domtrans_setfiles(openshell_systemd_helper_t)
 # The helper's Landlock fence sets "no new privileges", under which
