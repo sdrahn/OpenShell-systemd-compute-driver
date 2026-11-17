@@ -89,7 +89,7 @@ system and are shipped as the package `openshell-driver-systemd-tests`;
 `test/vm/run-vm.sh <rpm dir>` runs them in a disposable Leap 16 VM, as
 CI does.
 
-Released: 0.1.0 (branch `release-0.1`;
+Released: 0.1.1 (branch `release-0.1`;
 [CHANGELOG.md](CHANGELOG.md)). Main is 0.2.0 in development.
 
 Changes are made as [AGENTS.md](AGENTS.md) says, for people and coding

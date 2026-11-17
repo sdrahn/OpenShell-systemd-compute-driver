@@ -175,7 +175,7 @@ restart a system service. Neither restart touches a running sandbox.
   new package names, not past it.
 
 An upgrade from one version of the package to the next has not been
-tested yet: 0.1.0 is the first.
+tested yet, from 0.1.0 to 0.1.1 neither.
 
 ## Removing {#remove}
 
