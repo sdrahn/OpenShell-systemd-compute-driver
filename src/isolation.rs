@@ -169,12 +169,27 @@ fn supervisor_environment(
     Ok(environment)
 }
 
-/// The workload's environment before the sandbox's own.
-fn child_environment() -> HashMap<String, String> {
-    HashMap::from([(
+/// The workload's environment: a `PATH` of the host's, then the sandbox
+/// template's variables and the request's (`--env`, `--env-from`), the
+/// request's winning, as the container drivers layer them over an image's.
+///
+/// `openshell-sandbox` started with a boundary configuration takes its
+/// workload's variables from there alone, not from the supervisor's
+/// `OPENSHELL_USER_ENVIRONMENT`. OpenShell's own names (`OPENSHELL_…`) are
+/// left out: a request does not set the sandbox's controls.
+fn child_environment(sandbox: &DriverSandbox) -> HashMap<String, String> {
+    let mut environment = HashMap::from([(
         "PATH".to_string(),
         "/usr/local/bin:/usr/bin:/bin".to_string(),
-    )])
+    )]);
+    if let Some(spec) = sandbox.spec.as_ref() {
+        if let Some(template) = spec.template.as_ref() {
+            environment.extend(template.environment.clone());
+        }
+        environment.extend(spec.environment.clone());
+    }
+    environment.retain(|name, _| !name.starts_with("OPENSHELL_"));
+    environment
 }
 
 /// Builds the launch files of one sandbox generation.
@@ -248,7 +263,7 @@ pub fn provision(
         resource_claim_files: BTreeMap::new(),
         workload_identity: identity.clone(),
         provisioning_evidence: provisioning_evidence.clone(),
-        child_env: child_environment(),
+        child_env: child_environment(sandbox),
     };
     let runtime_descriptor = SandboxRuntimeDescriptor {
         boundary_id: sandbox.id.clone(),
@@ -320,6 +335,49 @@ mod tests {
         assert_eq!(
             network_namespace_unit(id),
             "openshell-sandbox-netns@d6ac9d5f-60aa-4fcb-b050-9a0a4b134205.service"
+        );
+    }
+
+    #[test]
+    fn the_workload_gets_the_sandbox_s_own_variables() {
+        use openshell_core::proto::compute::v1::{DriverSandboxSpec, DriverSandboxTemplate};
+
+        let mut sandbox = DriverSandbox {
+            id: "d6ac9d5f-60aa-4fcb-b050-9a0a4b134205".into(),
+            name: "demo".into(),
+            ..Default::default()
+        };
+        // Without a spec, the workload still gets a PATH.
+        assert_eq!(
+            child_environment(&sandbox).get("PATH").map(String::as_str),
+            Some("/usr/local/bin:/usr/bin:/bin")
+        );
+        sandbox.spec = Some(DriverSandboxSpec {
+            template: Some(DriverSandboxTemplate {
+                environment: HashMap::from([
+                    ("TEMPLATE_ONLY".to_string(), "template".to_string()),
+                    ("OVERRIDE".to_string(), "template".to_string()),
+                ]),
+                ..Default::default()
+            }),
+            environment: HashMap::from([
+                ("REQUEST_ONLY".to_string(), "request".to_string()),
+                ("OVERRIDE".to_string(), "request".to_string()),
+                ("PATH".to_string(), "/sandbox/bin:/usr/bin".to_string()),
+                ("OPENSHELL_SANDBOX_TOKEN".to_string(), "spoofed".to_string()),
+            ]),
+            ..Default::default()
+        });
+        let environment = child_environment(&sandbox);
+        let get = |name: &str| environment.get(name).map(String::as_str);
+        assert_eq!(get("TEMPLATE_ONLY"), Some("template"));
+        assert_eq!(get("REQUEST_ONLY"), Some("request"));
+        assert_eq!(get("OVERRIDE"), Some("request"));
+        assert_eq!(get("PATH"), Some("/sandbox/bin:/usr/bin"));
+        assert!(
+            !environment
+                .keys()
+                .any(|name| name.starts_with("OPENSHELL_"))
         );
     }
 

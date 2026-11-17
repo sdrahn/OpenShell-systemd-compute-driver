@@ -257,6 +257,7 @@ echo "token: $(head -c 10 /etc/openshell/auth/sandbox.jwt 2>&1 | head -n 1)"
 echo "direct tcp: $( (exec 3<>/dev/tcp/1.1.1.1/80) 2>&1 && echo OPEN)"
 echo "mount: $(mount -t tmpfs none /tmp 2>&1 | head -n 1)"
 echo "unshare: $(unshare -n true 2>&1 | head -n 1)"
+echo "environment: ${DRIVER_TEST_ENV:-none} ${DRIVER_TEST_FROM:-none}"
 unix() { python3 -c "
 import socket, sys
 s = socket.socket(socket.AF_UNIX, getattr(socket, sys.argv[2]))
@@ -268,7 +269,11 @@ echo "journald: $(unix /run/systemd/journal/socket SOCK_DGRAM)"
 echo "report done"
 exec sleep 3600'
 name=functional
-check "a sandbox is created" timeout 300 openshell sandbox create --name "$name" --detach -- bash -c "$report"
+# The sandbox's own variables, given with --env and, from this shell's
+# environment, with --env-from.
+export DRIVER_TEST_FROM=from-env-from
+check "a sandbox is created" timeout 300 openshell sandbox create --name "$name" \
+	--env DRIVER_TEST_ENV=from-env --env-from DRIVER_TEST_FROM --detach -- bash -c "$report"
 check "the sandbox becomes ready" wait_phase "$name" Ready
 id=$(sandbox_id "$name")
 echo "sandbox id: $id"
@@ -334,6 +339,7 @@ check "it has no capabilities" has "$r" '^CapEff: *0000000000000000$'
 check "it cannot gain privileges" has "$r" '^NoNewPrivs: *1$'
 check "a seccomp filter is on" has "$r" '^Seccomp: *2$'
 check "loopback is its only interface" has "$r" '^interfaces: lo $'
+check "it has the sandbox's own variables (--env, --env-from)" has "$r" '^environment: from-env from-env-from$'
 check "it writes its workspace" has "$r" '^write /sandbox: WRITTEN$'
 check "it writes /tmp" has "$r" '^write /tmp: WRITTEN$'
 check "it cannot write /etc" lacks "$r" '^write /etc: WRITTEN'
@@ -356,6 +362,7 @@ check "the sandbox has its own user's record" inside "$name" test -r "/etc/userd
 refuse "and no other's" inside "$name" sh -c 'ls /etc/userdb | grep -v "^osb-'"$uid"'\.\|^'"$uid"'\." | grep -q .'
 refuse "the host's records of every sandbox's user are not there" inside "$name" sh -c 'ls /run/userdb 2>/dev/null | grep -q .'
 check "its name service is the sandbox's" sh -c "timeout 90 openshell sandbox exec $name -- getent hosts example.com"
+check "a command run in it has the sandbox's own variables" sh -c "timeout 90 openshell sandbox exec $name -- printenv DRIVER_TEST_ENV | grep -qx from-env"
 check "an image is refused" sh -c "timeout 120 openshell sandbox create --name withimage --from registry.example/image:1 --detach -- true 2>&1 | grep -q 'takes no image'"
 openshell sandbox delete withimage >/dev/null 2>&1
 
