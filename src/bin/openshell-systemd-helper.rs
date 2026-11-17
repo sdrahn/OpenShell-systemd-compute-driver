@@ -214,12 +214,13 @@ fn sandbox_user_name(uid: u32) -> String {
 }
 
 /// The records that give a sandbox's user and group their name, as the
-/// files systemd reads from a `userdb` directory: one by name, and a link
-/// to it by number.
-fn userdb_records(uid: u32) -> [(String, Option<String>); 4] {
+/// files systemd reads from a `userdb` directory: a record under the
+/// name, and a link to it under the number. Each entry is a file's name
+/// and either its content or the name it links to.
+fn userdb_records(uid: u32) -> [(String, std::result::Result<String, String>); 4] {
     let name = sandbox_user_name(uid);
     let gid = sandbox_gid(uid);
-    let user = serde_json::json!({
+    let user_record = serde_json::json!({
         "userName": name,
         "uid": uid,
         "gid": gid,
@@ -227,32 +228,26 @@ fn userdb_records(uid: u32) -> [(String, Option<String>); 4] {
         "homeDirectory": "/sandbox",
         "shell": "/usr/sbin/nologin",
     });
-    let group = serde_json::json!({ "groupName": name, "gid": gid });
+    let group_record = serde_json::json!({ "groupName": name, "gid": gid });
+    let user_file = format!("{name}.user");
+    let group_file = format!("{name}.group");
     [
-        (format!("{name}.user"), Some(user.to_string())),
-        (format!("{uid}.user"), None),
-        (format!("{name}.group"), Some(group.to_string())),
-        (format!("{gid}.group"), None),
+        (user_file.clone(), Ok(user_record.to_string())),
+        (format!("{uid}.user"), Err(user_file)),
+        (group_file.clone(), Ok(group_record.to_string())),
+        (format!("{gid}.group"), Err(group_file)),
     ]
 }
 
 /// Writes a sandbox's records into a `userdb` directory. A file that is
 /// there is replaced, by a new file under its name.
 fn write_userdb(dir: &Path, uid: u32, owner_uid: u32, owner_gid: u32) -> std::io::Result<()> {
-    let name = sandbox_user_name(uid);
-    for (file, content) in userdb_records(uid) {
-        let path = dir.join(&file);
+    for (file, entry) in userdb_records(uid) {
+        let path = dir.join(file);
         remove_tree(&path)?;
-        match content {
-            Some(content) => create_file(&path, content.as_bytes(), 0o644, owner_uid, owner_gid)?,
-            None => {
-                let kind = if file.ends_with(".user") {
-                    "user"
-                } else {
-                    "group"
-                };
-                std::os::unix::fs::symlink(format!("{name}.{kind}"), &path)?;
-            }
+        match entry {
+            Ok(content) => create_file(&path, content.as_bytes(), 0o644, owner_uid, owner_gid)?,
+            Err(target) => std::os::unix::fs::symlink(target, &path)?,
         }
     }
     Ok(())
