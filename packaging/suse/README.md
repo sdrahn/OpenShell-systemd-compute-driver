@@ -33,6 +33,40 @@ Then, in that directory: `rpmbuild -ba openshell-driver-systemd.spec`
 with `_sourcedir` set to it, or `osc build`. CI does the first in a
 Leap 16 container, and the functional tests install what it built.
 
+## Releases
+
+Each release has a branch `release-X.Y` and tags `vX.Y.Z`. Pushing a tag
+publishes a GitHub release (`.github/workflows/release.yml`) with the
+source files `make-sources` writes, the spec and `SHA256SUMS`, and the
+tag's section of `CHANGELOG.md` as its notes. A build service project
+takes those files as they are.
+
+To release X.Y.0:
+
+1. From the latest main, branch `release-X.Y`. CI runs on it as on main.
+2. The release commit, a pull request against that branch, writes the
+   section `## vX.Y.Z — <date>` into `CHANGELOG.md` from the fragments in
+   `changes.d/` (`tools/changelog release vX.Y.Z`, which removes them),
+   with `changes.d/intro.md` as its introduction: what the release is
+   about and what to know when upgrading. The spec, `Cargo.toml` and
+   `Cargo.lock` already say X.Y.Z.
+3. `tools/check-release vX.Y.Z` checks that those three and the first
+   `CHANGELOG.md` section name the release, that no fragment is left in
+   `changes.d/`, and that the tree holds sources only. A maintainer then
+   tags the branch and pushes the tag:
+   `git tag -a vX.Y.Z -m "OpenShell systemd compute driver X.Y.Z"`,
+   `git push origin vX.Y.Z`. The Release workflow runs the same check
+   before it builds anything, and afterwards downloads what it published
+   and compares it with `SHA256SUMS` and with `git archive` of the tag.
+4. On main, the pull request that follows gives `CHANGELOG.md` the same
+   section (`tools/changelog release` there, where the fragments still
+   are) and sets the spec, `Cargo.toml` and `Cargo.lock` to the next
+   version, `X.(Y+1).0`. New changes go into `changes.d/` again.
+
+A fix release X.Y.Z+1 goes on the branch: the fix (from main, with its
+fragment), then a release commit with its version and its `CHANGELOG.md`
+section, and the same section on main afterwards.
+
 ## A new OpenShell release
 
 `tools/openshell-version vX.Y.Z`, then `cargo update -p openshell-core`

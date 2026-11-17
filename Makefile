@@ -17,6 +17,7 @@ check: fmt-check lint test
 	tools/openshell-version >/dev/null
 	tools/check-tree
 	tools/check-docs
+	test/tools/check-release-test.sh
 
 fmt-check:
 	cargo fmt --all -- --check
