@@ -9,6 +9,23 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.1.2 — 2026-11-17
+
+A fix release: a sandbox's supervisor reads the host's CA certificates,
+so a host whose certificate a private CA in the host's trust store
+signed can be reached from a sandbox. With 0.1.1 the supervisor fell
+back to the CA certificates built into OpenShell on SLES and openSUSE.
+Restart the sandboxes that run to give their supervisors the change.
+
+### Fixed
+
+- A sandbox's supervisor reads the host's CA certificates. Its
+  Landlock fence let it read `/etc`, but on SLES and openSUSE
+  `/etc/ssl/ca-bundle.pem` is a link into `/var/lib/ca-certificates`,
+  so it fell back to the CA certificates built into OpenShell, and a
+  host with a private CA, added to the host's trust store, could not be
+  reached through it ("unknown certificate authority").
+
 ## v0.1.1 — 2026-11-17
 
 A fix release: a sandbox's own variables (`--env`, `--env-from`, and a
