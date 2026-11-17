@@ -338,10 +338,12 @@ impl Helper {
 
     /// Removes a sandbox's drop-ins. Returns whether there were any.
     fn remove_drop_ins(&self, sandbox_id: &str) -> bool {
-        CONFINED_UNITS
-            .iter()
-            .map(|(kind, _)| std::fs::remove_dir_all(self.drop_in(kind, sandbox_id)).is_ok())
-            .fold(false, |any, removed| any || removed)
+        // Every one of them, also after the first that was there.
+        let mut any = false;
+        for (kind, _) in CONFINED_UNITS {
+            any |= std::fs::remove_dir_all(self.drop_in(kind, sandbox_id)).is_ok();
+        }
+        any
     }
 
     /// Writes one launch's files. Everything of an earlier launch but the
