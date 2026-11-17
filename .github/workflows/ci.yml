@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # A release branch runs everything before its tag is set.
+    branches: [main, "release-*"]
   pull_request:
 
 permissions:

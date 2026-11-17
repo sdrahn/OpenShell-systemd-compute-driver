@@ -1,0 +1,101 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes a GitHub release with the package's
+# source files as packaging/suse/make-sources writes them (the driver's
+# source, OpenShell's source at the release the driver is built against,
+# the crates of both, and the spec) and SHA256SUMS, with the tag's
+# section of CHANGELOG.md as its notes. A release published in the web
+# interface instead (which creates the tag) gets the same files and
+# keeps what was set there. Binary packages come from a build service.
+# packaging/suse/README.md, "Releases", is the process.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  # As in CI: the toolchain OpenShell pins for the release the driver is
+  # built against.
+  RUSTUP_TOOLCHAIN: "1.95.0"
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      # Before anything is built or published: the spec, Cargo's files
+      # and the changelog must name this tag, and the tree must hold
+      # sources only.
+      - name: Tag matches the files
+        run: tools/check-release "$GITHUB_REF_NAME" HEAD
+      - name: Toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+      - name: Check
+        run: make check
+      - name: Sources
+        run: |
+          set -eu
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends zstd >/dev/null
+          packaging/suse/make-sources "$PWD/dist"
+          (cd dist && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+      - name: Release notes
+        run: |
+          set -eu
+          # The section of CHANGELOG.md headed "## <tag> ...", up to the next "## ".
+          awk -v tag="$GITHUB_REF_NAME" '
+            /^## / { if (found) exit; if ($2 == tag) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md >notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          title="OpenShell systemd compute driver ${GITHUB_REF_NAME}"
+          if release=$(gh release view "$GITHUB_REF_NAME" --json databaseId,name,body 2>/dev/null); then
+            # A release made in the web interface (publishing it created
+            # the tag) keeps what was set there: pre-release, latest and
+            # draft are not touched, and a title or notes written there
+            # stay. The sources are attached; only an empty title or
+            # empty notes are filled in.
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            id=$(jq -r .databaseId <<<"$release")
+            name=$(jq -r '.name // ""' <<<"$release")
+            body=$(jq -r '.body // ""' <<<"$release")
+            fields=()
+            [ -n "${name//[[:space:]]/}" ] || fields+=(-f "name=$title")
+            [ -n "${body//[[:space:]]/}" ] || fields+=(-F "body=@notes.md")
+            if [ ${#fields[@]} -gt 0 ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" "${fields[@]}" >/dev/null
+            fi
+          else
+            # A pushed tag: a pre-release for tags like v1.2.0-rc1, else a
+            # full release.
+            prerelease=""
+            case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$title" --notes-file notes.md --verify-tag $prerelease
+          fi
+      # What was published is what was built: the files download, match
+      # SHA256SUMS, and the driver's tarball is git archive of the tag.
+      - name: Verify the published files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(awk '$1 == "Version:" {print $2}' packaging/suse/openshell-driver-systemd.spec)
+          mkdir verify
+          gh release download "$GITHUB_REF_NAME" --dir verify
+          (cd verify && sha256sum -c SHA256SUMS)
+          git archive --prefix="openshell-driver-systemd-$version/" HEAD |
+            cmp - <(gzip -dc "verify/openshell-driver-systemd-$version.tar.gz")
