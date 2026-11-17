@@ -39,11 +39,6 @@ struct Args {
     #[arg(long)]
     runtime_dir: PathBuf,
 
-    /// The sandbox's workspace, as the host names it: the supervisor
-    /// reads the programs a workload runs from there.
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-
     /// The supervisor and its arguments.
     #[arg(last = true, required = true)]
     command: Vec<OsString>,
@@ -52,9 +47,9 @@ struct Args {
 /// What one sandbox's supervisor needs. The paths under `/.openshell` and
 /// in `/etc/openshell` are those its unit binds its own sandbox's files
 /// to; no other sandbox's are among them.
-fn fence(runtime_dir: &Path, workspace: Option<&Path>) -> Fence {
+fn fence(runtime_dir: &Path) -> Fence {
     let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
-    let mut read = paths(&[
+    let read = paths(&[
         "/etc",
         "/proc",
         "/sys",
@@ -64,7 +59,6 @@ fn fence(runtime_dir: &Path, workspace: Option<&Path>) -> Fence {
         "/run/netconfig",
         "/run/systemd/resolve",
     ]);
-    read.extend(workspace.map(Path::to_path_buf));
     let mut read_write = paths(&[
         "/.openshell/supervisor",
         "/.openshell/channel/control",
@@ -87,7 +81,7 @@ fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .without_time()
         .init();
-    match fence(&args.runtime_dir, args.workspace.as_deref()).enter_as(args.landlock) {
+    match fence(&args.runtime_dir).enter_as(args.landlock) {
         Ok(Outcome::None) if args.landlock != Mode::Off => {
             tracing::warn!("The supervisor runs without a Landlock fence");
         }
@@ -114,19 +108,11 @@ mod tests {
 
     #[test]
     fn the_fence_names_this_sandbox_and_no_state_directory() {
-        let fence = fence(
-            Path::new("/run/openshell-sandbox/one"),
-            Some(Path::new("/var/lib/openshell/systemd/one/workspace")),
-        );
+        let fence = fence(Path::new("/run/openshell-sandbox/one"));
         assert!(
             fence
                 .read_write
                 .contains(&PathBuf::from("/run/openshell-sandbox/one"))
-        );
-        assert!(
-            fence
-                .read
-                .contains(&PathBuf::from("/var/lib/openshell/systemd/one/workspace"))
         );
         // Not the directory that holds every sandbox's files, nor every
         // supervisor's runtime directory.

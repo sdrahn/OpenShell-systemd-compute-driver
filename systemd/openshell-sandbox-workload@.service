@@ -26,8 +26,9 @@ PrivateNetwork=yes
 # workload has a process ID namespace of its own, so that it can neither
 # see nor signal them. Needs systemd 257.
 PrivatePIDs=yes
-# Shared memory and message queues of its own: every workload is the same
-# user, and the host's would be a way from one sandbox to another.
+# Shared memory and message queues of its own (the namespace unit's):
+# every workload is the same user, and the host's would be a way from one
+# sandbox to another.
 PrivateIPC=yes
 BindPaths=/var/lib/openshell/systemd/%i/workspace:/sandbox
 BindPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel

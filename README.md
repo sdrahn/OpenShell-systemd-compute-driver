@@ -224,7 +224,7 @@ The supervisor is the stock program, and every sandbox's supervisor is the
 same user: file modes would let one read another sandbox's credentials. Its
 unit starts it through `openshell-supervisor-fence`, which enters a fence
 that names this sandbox's files (its launch files, its runtime directory,
-the control socket's directory, its workspace to read) besides `/usr`,
+the control socket's directory) besides `/usr`,
 `/etc`, `/proc` and `/sys`, and then becomes the supervisor. The network is
 not part of this fence: what a sandbox may reach is OpenShell's policy,
 which the supervisor is there to hold. `--landlock` has the same three

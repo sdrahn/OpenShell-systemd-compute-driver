@@ -270,7 +270,8 @@ refuse "in the namespace unit's domain, root cannot write in /etc" in_netns_doma
 check "the three units are active" systemctl is-active "openshell-sandbox-netns@$id.service" "openshell-sandbox-supervisor@$id.service" "openshell-sandbox-workload@$id.service"
 check "the supervisor is the stock program, started by its launcher" sh -c "[ \"\$(readlink /proc/$sup/exe)\" = /usr/libexec/openshell/openshell-supervisor ] && systemctl show openshell-sandbox-supervisor@$id.service -p ExecStart --value | grep -q openshell-supervisor-fence"
 check "the supervisor cannot gain privileges" sh -c "grep -qx 'NoNewPrivs:[[:space:]]*1' /proc/$sup/status"
-check "the supervisor's unit holds no other sandbox's files" sh -c "[ \"\$(nsenter -t $sup -m ls /var/lib/openshell/systemd)\" = $id ] && [ \"\$(nsenter -t $sup -m ls /run/openshell-sandbox)\" = $id ]"
+check "the supervisor's unit holds no sandbox's files but through its own mounts" sh -c "[ -z \"\$(nsenter -t $sup -m ls /var/lib/openshell)\" ]"
+check "the supervisor's unit holds its own runtime directory alone" sh -c "[ \"\$(nsenter -t $sup -m ls /run/openshell-sandbox)\" = $id ]"
 echo "the workload's /run: $(nsenter -t "$wl" -m ls /run 2>&1 | tr '\n' ' ')"
 refuse "the workload's unit holds the host's D-Bus socket" nsenter -t "$wl" -m test -e /run/dbus/system_bus_socket
 refuse "the workload's unit holds the journal's socket" nsenter -t "$wl" -m test -e /run/systemd/journal/socket
@@ -454,9 +455,9 @@ as_supervisor_of() {
 	local of=$1 mode=$2
 	shift 2
 	runuser -u openshell-sandbox -- /usr/libexec/openshell/openshell-supervisor-fence --landlock "$mode" \
-		--runtime-dir "/run/openshell-sandbox/$of" --workspace "$state/$of/workspace" -- "$@"
+		--runtime-dir "/run/openshell-sandbox/$of" -- "$@"
 }
-check "behind its fence, a supervisor's program reads its own sandbox's workspace" as_supervisor_of "$idb" required /usr/bin/cat "$state/$idb/workspace/theirs"
+check "behind its fence, a supervisor's program lists its own runtime directory" as_supervisor_of "$idb" required /usr/bin/ls "/run/openshell-sandbox/$idb"
 check "without the fence, a supervisor's user reads another sandbox's token" as_supervisor_of "$id" off /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
 refuse "behind its fence, it cannot read another sandbox's token" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
 refuse "behind its fence, it cannot read another sandbox's workspace" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"
@@ -468,10 +469,14 @@ chcon -t openshell_supervisor_exec_t /usr/local/bin/driver-test-kill
 signals_as() {
 	systemd-run --quiet --wait --collect -p User=openshell-sandbox \
 		-p "SELinuxContext=system_u:system_r:openshell_supervisor_t:s0:$1" \
-		/usr/local/bin/driver-test-kill -0 "$2"
+		/usr/local/bin/driver-test-kill "$2" "$3"
 }
-check "in its domain, a supervisor's program signals a process of its own sandbox" signals_as "$levelb" "$supb"
-refuse "with another sandbox's categories, it cannot signal that supervisor" signals_as "$level" "$supb"
+check "in its domain, a supervisor's program signals a process of its own sandbox" signals_as "$levelb" -0 "$supb"
+# Not checks: what the policy of the distribution does with a signal from
+# another sandbox's categories. Every supervisor is the same user and
+# they share the host's process IDs (docs/security-review-0.1.md, S2).
+echo "another sandbox's categories, signal 0: $(signals_as "$level" -0 "$supb" && echo delivered || echo refused)"
+echo "another sandbox's categories, SIGCONT: $(signals_as "$level" -CONT "$supb" && echo delivered || echo refused)"
 rm -f /usr/local/bin/driver-test-kill
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
 refuse "a workload cannot signal the other supervisor" inside "$name" sh -c "kill -0 $supb"

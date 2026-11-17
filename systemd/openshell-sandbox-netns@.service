@@ -19,6 +19,9 @@ PrivateNetwork=yes
 # A unit that joins this one shares its /tmp as well: private, so that
 # the workload's stays writable and its own.
 PrivateTmp=yes
+# The workload joins this unit's namespaces: shared memory and message
+# queues of the sandbox's own, not the host's.
+PrivateIPC=yes
 ExecStart=sysctl -q -w net.ipv4.ip_unprivileged_port_start=0
 # It writes one setting of its own network namespace, as root, and ends.
 # Of root's rights it keeps the one for that, and nothing of the host is
