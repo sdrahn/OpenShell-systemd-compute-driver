@@ -34,6 +34,7 @@ policy_module(openshell_systemd, 1.0.0)
 gen_require(`
 	type init_t;
 	type systemd_unit_file_t;
+	type setfiles_t;
 	class system { status reload };
 	class service { start stop status reload };
 	class process2 nnp_transition;
@@ -309,6 +310,9 @@ allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervi
 allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:{ file lnk_file fifo_file sock_file } { manage_file_perms relabelfrom relabelto };
 files_search_var_lib(openshell_systemd_helper_t)
 seutil_domtrans_setfiles(openshell_systemd_helper_t)
+# The helper's Landlock fence sets "no new privileges", under which
+# restorecon's domain is entered only with this.
+allow openshell_systemd_helper_t setfiles_t:process2 nnp_transition;
 selinux_get_fs_mount(openshell_systemd_helper_t)
 selinux_validate_context(openshell_systemd_helper_t)
 seutil_read_config(openshell_systemd_helper_t)

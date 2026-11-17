@@ -134,6 +134,13 @@ systemctl daemon-reload
 check "the helper starts" systemctl enable --now openshell-systemd-helper.service
 sleep 2
 check "the helper is active" systemctl is-active openshell-systemd-helper.service
+check "the helper has its Landlock fence" sh -c 'journalctl -u openshell-systemd-helper.service --no-pager -o cat | grep -q "landlock=Enforced"'
+# The same program, started from here: not in the helper's SELinux domain,
+# so what it is refused, the fence alone refuses.
+echo "--- the helper's test of its fence"
+/usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test 2>&1 | cut -c1-200
+check "the fence refuses root what the helper does not need" /usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test
+refuse "without the fence, the same test fails" /usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test --landlock off
 check "the helper runs in its domain" sh -c "tr -d '\\0' </proc/\$(systemctl show openshell-systemd-helper.service -p MainPID --value)/attr/current | grep -q ':openshell_systemd_helper_t:'"
 check "the sandbox units have their label" sh -c 'ls -Z /usr/lib/systemd/system/openshell-sandbox-workload@.service | grep -q openshell_sandbox_unit_file_t'
 check "the mount points exist without the helper having made them" test -d /.openshell/channel -a -d /sandbox -a -f /etc/openshell/auth/sandbox.jwt

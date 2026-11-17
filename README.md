@@ -190,6 +190,31 @@ privileges (no new privileges, no namespaces, three kinds of socket).
 
 The module was written against the policy of openSUSE Leap 16.0.
 
+## Landlock
+
+The helper runs as root, and before it serves a request it puts a Landlock
+fence around itself, which binds root too. Afterwards it reaches its state
+directory, the directory of the drop-ins and its socket, reads `/usr`,
+`/etc`, `/proc`, `/sys` and `/run`, and takes no TCP port and makes no TCP
+connection. The programs it runs (`systemctl`, `restorecon`, `chcon`,
+`stat`) are behind the same fence. This is a second layer next to the
+SELinux domain, and the only one on a host without the module.
+
+`--landlock` (`OPENSHELL_SYSTEMD_HELPER_LANDLOCK`) says what to do on a
+kernel that cannot hold the helper to its files (Landlock before Linux 6.2,
+or none): `required`, the default, does not start; `best-effort` goes on
+with what the kernel offers; `off` asks for none.
+`openshell-systemd-helper --allow-user <user> --self-test` enters the fence,
+tries what it must refuse and what it must allow, and prints each result.
+
+The fence does not cover everything: it grants a directory, not names in
+it, so the helper could write a drop-in for any unit; and Landlock does not
+mediate connecting to a Unix socket by its path, nor changes of a file's
+owner, mode or label.
+
+The workload is behind a Landlock fence of OpenShell's own, from the
+sandbox's policy: `openshell-sandbox` sets it. The supervisor has none yet.
+
 ## Not supported
 
 - Images: there is no root file system but the host's.
