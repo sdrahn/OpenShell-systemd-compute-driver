@@ -1,0 +1,3 @@
+# Advisories that the Vulnerabilities job accepts: one ID a line, then
+# the reason. An entry goes when the crate is updated; the job lists the
+# accepted ones at every run.

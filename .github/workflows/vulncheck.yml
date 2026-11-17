@@ -1,0 +1,40 @@
+name: Vulnerabilities
+
+# The crates the driver is built with (Cargo.lock), against the RustSec
+# advisory database: on every change, and every week, since an advisory
+# can appear for a crate that did not change.
+#
+# A finding fails the job unless .github/audit-known lists its ID with
+# the reason it is accepted. Not covered: the crates of the two stock
+# programs the package builds from OpenShell's source, which OpenShell's
+# own lock file names.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.21
+      - name: cargo-audit
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked --version '^0.21'
+      - name: Check Cargo.lock
+        run: |
+          ignore=()
+          while read -r id _; do
+            case $id in RUSTSEC-*) ignore+=(--ignore "$id") ;; esac
+          done <.github/audit-known
+          echo "accepted: ${ignore[*]:-none}"
+          cargo audit --deny warnings "${ignore[@]}"
