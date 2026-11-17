@@ -30,7 +30,7 @@ gen_require(`
 	type init_t;
 	type systemd_unit_file_t;
 	class system { status reload };
-	class service { start stop status };
+	class service { start stop status reload };
 ')
 
 ########################################
@@ -297,13 +297,19 @@ seutil_domtrans_setfiles(openshell_systemd_helper_t)
 selinux_get_fs_mount(openshell_systemd_helper_t)
 selinux_validate_context(openshell_systemd_helper_t)
 seutil_read_config(openshell_systemd_helper_t)
+fs_getattr_xattr_fs(openshell_systemd_helper_t)
+# Whether the module labels the programs: then sandboxes get categories.
+allow openshell_systemd_helper_t openshell_sandbox_exec_t:file getattr;
 
 # The sandbox units, through systemd: start, stop, state, and reading
 # the units again after a drop-in changed.
 systemd_exec_systemctl(openshell_systemd_helper_t)
 init_stream_connect(openshell_systemd_helper_t)
 allow openshell_systemd_helper_t init_t:system { status reload };
-allow openshell_systemd_helper_t openshell_sandbox_unit_file_t:service { start stop status };
+allow openshell_systemd_helper_t openshell_sandbox_unit_file_t:service { start stop status reload };
+# systemctl tries to enlarge a socket's buffer beyond the limit, and does
+# without.
+dontaudit openshell_systemd_helper_t self:capability net_admin;
 
 # The drop-ins that give a sandbox's units its level. A directory the
 # helper makes among systemd's runtime units gets the units' type, and
