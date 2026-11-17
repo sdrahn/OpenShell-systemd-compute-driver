@@ -81,6 +81,16 @@ wait_phase() {
 	return 1
 }
 label_of() { tr -d '\0' <"/proc/$1/attr/current"; }
+# The categories of a process: what follows ":s0:" in its label.
+categories_of() { label_of "$1" | sed -n 's/^.*:s0:\(c[0-9]*,c[0-9]*\)$/\1/p'; }
+# reads_as CATEGORIES FILE: reads a file in the workload's domain, as its
+# user and with these categories, but outside every sandbox's namespaces:
+# what a workload that had left its namespaces could do.
+reads_as() {
+	systemd-run --quiet --wait --collect -p User=openshell-sandbox \
+		-p "SELinuxContext=system_u:system_r:openshell_sandbox_t:s0:$1" \
+		/usr/local/bin/driver-test-cat "$2"
+}
 main_pid() { systemctl show "$1" -p MainPID --value; }
 # has FILE PATTERN / lacks FILE PATTERN: a line of the workload's report.
 has() { grep -E -- "$2" "$1"; }
@@ -207,6 +217,12 @@ check "the workload has a network namespace of its own" sh -c "[ \"\$(readlink /
 check "the workload has a process ID namespace of its own" sh -c "[ \"\$(readlink /proc/$wl/ns/pid)\" != \"\$(readlink /proc/1/ns/pid)\" ]"
 check "the supervisor's files have their label" sh -c "ls -Zd $d/supervisor | grep -q openshell_supervisor_conf_t"
 check "the workspace has its label" sh -c "ls -Zd $d/workspace | grep -q openshell_sandbox_workspace_t"
+level=$(categories_of "$wl")
+echo "categories: ${level:-none}"
+check "the workload has a pair of categories" test -n "$level"
+check "its supervisor has the same pair" sh -c "[ \"$(categories_of "$sup")\" = \"$level\" ]"
+check "the workspace carries the pair" sh -c "ls -Zd $d/workspace | grep -q ':s0:$level '"
+XX
 check "the credentials are the workloads' user's alone" sh -c "[ \"\$(stat -c '%U %a' $d/etc/sandbox.jwt)\" = 'openshell-sandbox 600' ]"
 
 section "what the workload can do"
@@ -294,6 +310,19 @@ supb=$(main_pid "openshell-sandbox-supervisor@$idb.service")
 wlb=$(main_pid "openshell-sandbox-workload@$idb.service")
 supa=$(main_pid "openshell-sandbox-supervisor@$id.service")
 check "the second has a network namespace of its own" sh -c "[ \"\$(readlink /proc/$wlb/ns/net)\" != \"\$(readlink /proc/\$(systemctl show openshell-sandbox-workload@$id.service -p MainPID --value)/ns/net)\" ]"
+# One sandbox's files against another's categories, where neither the
+# namespaces nor the file modes stand in the way: both run as one user.
+levelb=$(categories_of "$wlb")
+echo "categories: $level and ${levelb:-none}"
+check "the second sandbox has a pair of categories" test -n "$levelb"
+check "the two sandboxes have different categories" test "$level" != "$levelb"
+check "the second sandbox writes a file" inside second sh -c 'echo theirs >/sandbox/theirs'
+install -m 0755 /usr/bin/cat /usr/local/bin/driver-test-cat
+chcon -t openshell_sandbox_exec_t /usr/local/bin/driver-test-cat
+check "outside the namespaces, a sandbox's file is read with its categories" reads_as "$levelb" "$state/$idb/workspace/theirs"
+refuse "outside the namespaces, it is refused with another sandbox's categories" reads_as "$level" "$state/$idb/workspace/theirs"
+refuse "and so is the other supervisor's token" reads_as "$level" "$state/$idb/etc/sandbox.jwt"
+rm -f /usr/local/bin/driver-test-cat
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
 refuse "a workload cannot signal the other supervisor" inside "$name" sh -c "kill -0 $supb"
 refuse "a workload cannot signal the other workload" inside "$name" sh -c "kill -0 $wlb"
@@ -327,9 +356,10 @@ cat /var/log/audit/audit.log* 2>/dev/null | grep 'avc:  denied' >"$results/avc.t
 echo "audit records: $(cat /var/log/audit/audit.log* 2>/dev/null | wc -l); denials: $(wc -l <"$results/avc.txt")"
 check "the audit log is being written" sh -c 'cat /var/log/audit/audit.log* | grep -q "type="'
 # Those the tests provoke: the workload's report tries the system D-Bus
-# socket and journald's, and systemctl in a sandbox tries D-Bus.
+# socket and journald's, systemctl in a sandbox tries D-Bus, and the
+# test's own cat tries another sandbox's files.
 check "the D-Bus attempt was denied by the policy" grep -q 'system_bus_socket.*openshell_sandbox_t' "$results/avc.txt"
-grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
+grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-cat" name="(theirs|sandbox.jwt)".*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
 sed -E 's/^.*avc: +denied +//; s/ pid=[0-9]+//; s/ ino=[0-9]+//' "$results/avc-unexpected.txt" | sort | uniq -c | cut -c1-300
 if [ -n "$discovery" ]; then
 	echo "--- every kind of denial once: source target class { permissions } commands, paths"

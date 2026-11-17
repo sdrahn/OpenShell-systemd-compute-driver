@@ -17,6 +17,9 @@ policy_module(openshell_systemd, 1.0.0)
 #
 # The units enter the domains through the labels of the two programs, so
 # they start unchanged on a host without this module.
+#
+# All sandboxes share the two domains. What keeps one from another, besides
+# their namespaces, is the pair of categories each has.
 
 gen_require(`
 	type init_t;
@@ -36,6 +39,12 @@ type openshell_supervisor_t;
 type openshell_supervisor_exec_t;
 init_daemon_domain(openshell_supervisor_t, openshell_supervisor_exec_t)
 init_nnp_daemon_domain(openshell_supervisor_t)
+
+# Every sandbox has a pair of categories of its own (the helper chooses
+# them, and writes the drop-ins that start its two units with them). Its
+# files carry them, so one sandbox is refused what is another's.
+mcs_constrained(openshell_sandbox_t)
+mcs_constrained(openshell_supervisor_t)
 
 # The helper's state directory, and what in it is neither domain's.
 type openshell_systemd_var_lib_t;
