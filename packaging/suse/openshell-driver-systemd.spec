@@ -115,7 +115,6 @@ install -d %{buildroot}%{_unitdir} %{buildroot}%{_userunitdir}
 install -m 0644 systemd/*.service %{buildroot}%{_unitdir}/
 install -m 0644 systemd/user/*.service %{buildroot}%{_userunitdir}/
 install -D -m 0644 packaging/suse/%{name}.sysusers %{buildroot}%{_sysusersdir}/%{name}.conf
-%{_tmpfilesdir}/%{name}.conf
 install -D -m 0644 systemd/tmpfiles.d/%{name}.conf %{buildroot}%{_tmpfilesdir}/%{name}.conf
 install -d %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}
 bzip2 -9 -c selinux/%{modulename}.pp >%{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
@@ -164,6 +163,7 @@ fi
 %{_unitdir}/openshell-sandbox-workload@.service
 %{_userunitdir}/openshell-driver-systemd.service
 %{_sysusersdir}/%{name}.conf
+%{_tmpfilesdir}/%{name}.conf
 
 %files selinux
 %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
