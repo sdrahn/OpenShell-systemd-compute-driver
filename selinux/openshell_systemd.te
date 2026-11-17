@@ -20,8 +20,13 @@ policy_module(openshell_systemd, 1.0.0)
 # sandbox units. It has no network, and reaches no file and no unit but
 # those.
 #
-# The units enter the domains through the labels of the programs, so
-# they start unchanged on a host without this module.
+# openshell_sandbox_netns_t is the unit that holds a sandbox's network
+# namespace: one sysctl of that namespace, written as root.
+#
+# The units enter the three domains above through the labels of the
+# programs, so they start unchanged on a host without this module. The
+# namespace's unit runs a program of the system, and names its domain
+# itself.
 #
 # All sandboxes share the two domains. What keeps one from another, besides
 # their namespaces, is the pair of categories each has.
@@ -31,6 +36,8 @@ gen_require(`
 	type systemd_unit_file_t;
 	class system { status reload };
 	class service { start stop status reload };
+	class process2 nnp_transition;
+	role system_r;
 ')
 
 ########################################
@@ -69,6 +76,14 @@ files_pid_file(openshell_systemd_helper_runtime_t)
 # about.
 type openshell_sandbox_unit_file_t;
 systemd_unit_file(openshell_sandbox_unit_file_t)
+
+# The unit of a sandbox's network namespace. It is entered by the unit's
+# SELinuxContext=, with a program of the system (sysctl): there is no
+# rule that would send any other program here.
+type openshell_sandbox_netns_t;
+domain_type(openshell_sandbox_netns_t)
+role system_r types openshell_sandbox_netns_t;
+corecmd_bin_entry_type(openshell_sandbox_netns_t)
 
 # The helper's state directory, and what in it is neither domain's.
 type openshell_systemd_var_lib_t;
@@ -329,3 +344,24 @@ dev_read_sysfs(openshell_systemd_helper_t)
 fs_read_cgroup_files(openshell_systemd_helper_t)
 miscfiles_read_localization(openshell_systemd_helper_t)
 logging_send_syslog_msg(openshell_systemd_helper_t)
+
+########################################
+# The network namespace's unit
+
+allow init_t openshell_sandbox_netns_t:process transition;
+allow init_t openshell_sandbox_netns_t:process2 nnp_transition;
+allow openshell_sandbox_netns_t init_t:fd use;
+allow openshell_sandbox_netns_t init_t:process sigchld;
+allow openshell_sandbox_netns_t init_t:unix_stream_socket { read write getattr ioctl };
+allow openshell_sandbox_netns_t init_t:fifo_file rw_fifo_file_perms;
+
+# net.ipv4.ip_unprivileged_port_start of its own namespace.
+kernel_rw_net_sysctls(openshell_sandbox_netns_t)
+allow openshell_sandbox_netns_t self:capability net_admin;
+
+corecmd_search_bin(openshell_sandbox_netns_t)
+corecmd_read_bin_symlinks(openshell_sandbox_netns_t)
+libs_use_ld_so(openshell_sandbox_netns_t)
+libs_use_shared_libs(openshell_sandbox_netns_t)
+files_read_etc_files(openshell_sandbox_netns_t)
+miscfiles_read_localization(openshell_sandbox_netns_t)

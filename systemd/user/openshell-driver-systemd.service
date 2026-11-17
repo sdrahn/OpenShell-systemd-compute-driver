@@ -17,6 +17,17 @@ Type=exec
 ExecStart=/usr/bin/openshell-driver-systemd --bind-socket %t/openshell/systemd-driver.sock
 Restart=on-failure
 RestartSec=5
+# What a service of a user can be held to without privileges: it gains
+# none, and makes no namespace, no other kind of socket than these, and
+# no call of another architecture. It has no SELinux domain of its own:
+# it runs in its user's session, next to the gateway and as the same
+# user, and holds nothing the gateway does not.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=default.target

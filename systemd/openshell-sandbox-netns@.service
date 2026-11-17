@@ -20,3 +20,12 @@ PrivateNetwork=yes
 # the workload's stays writable and its own.
 PrivateTmp=yes
 ExecStart=sysctl -q -w net.ipv4.ip_unprivileged_port_start=0
+# It writes one setting of its own network namespace, as root, and ends.
+# Of root's rights it keeps the one for that, and nothing of the host is
+# writable for it. With the SELinux module it runs in a domain that may
+# do nothing else; "-": a host without the module has no such domain.
+SELinuxContext=-system_u:system_r:openshell_sandbox_netns_t:s0
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+ProtectSystem=strict
+ProtectHome=yes

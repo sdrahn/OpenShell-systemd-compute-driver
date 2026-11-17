@@ -140,7 +140,8 @@ helper and the two stock programs in `/usr/libexec/openshell/`, the units of
 ## SELinux
 
 `selinux/` holds an optional policy module with a domain for each of the two
-sandbox units and one for the helper. The units enter the domains through the labels of the two
+sandbox units, one for the helper and one for the unit of a sandbox's network
+namespace. The units enter the domains through the labels of the two
 programs, so they need no change, and they start as before on a host
 without the module.
 
@@ -157,6 +158,9 @@ without the module.
   has no network. It still runs as root and writes drop-ins among systemd's
   runtime units, so the domain bounds a mistake in the helper; it does not
   make the helper harmless.
+- `openshell_sandbox_netns_t`, the unit that holds a sandbox's network
+  namespace: one network setting of that namespace, written as root, and
+  nothing else.
 
 The package loads the module. By hand, with the policy development files of
 the distribution (`selinux-policy-devel`):
@@ -179,8 +183,12 @@ that start its two units with it. Two sandboxes run in the same domains and
 as the same user; with the categories the policy refuses one what is the
 other's, also for a workload that has left its namespaces.
 
-The module was written against the policy of openSUSE Leap 16.0. It does not
-confine the network namespace's unit or the driver.
+The driver has no domain of its own. It runs in the session of the gateway's
+user, next to the gateway and as the same user, and holds nothing the gateway
+does not; its unit is held to what a user's service can be held to without
+privileges (no new privileges, no namespaces, three kinds of socket).
+
+The module was written against the policy of openSUSE Leap 16.0.
 
 ## Not supported
 
