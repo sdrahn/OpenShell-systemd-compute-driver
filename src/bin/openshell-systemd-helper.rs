@@ -18,7 +18,7 @@ use clap::Parser;
 use miette::{IntoDiagnostic, Result, miette};
 use openshell_driver_systemd::config::DEFAULT_HELPER_SOCKET;
 use openshell_driver_systemd::envfile;
-use openshell_driver_systemd::fence::{Fence, Outcome, Requirement};
+use openshell_driver_systemd::fence::{Fence, Mode, Outcome};
 use openshell_driver_systemd::protocol::{
     MAX_MESSAGE_BYTES, Provision, Request, Response, SandboxRecord, UnitState, valid_sandbox_id,
 };
@@ -85,19 +85,12 @@ struct Args {
         value_enum,
         default_value = "required"
     )]
-    landlock: Landlock,
+    landlock: Mode,
 
     /// Enter the fence, try what it must refuse and what it must allow,
     /// print each result and exit: 0 if all are as they must be.
     #[arg(long)]
     self_test: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
-enum Landlock {
-    Required,
-    BestEffort,
-    Off,
 }
 
 /// Where a sandbox's units get their drop-ins.
@@ -885,15 +878,9 @@ fn main() -> Result<()> {
     }
     // The fence, before there is a second thread: it holds the thread that
     // enters it and what that thread starts.
-    let fenced = match args.landlock {
-        Landlock::Off => Outcome::None,
-        Landlock::Required => fence(&args.state_dir, &args.socket)
-            .enter(Requirement::Required)
-            .map_err(|message| miette!("{message}"))?,
-        Landlock::BestEffort => fence(&args.state_dir, &args.socket)
-            .enter(Requirement::BestEffort)
-            .map_err(|message| miette!("{message}"))?,
-    };
+    let fenced = fence(&args.state_dir, &args.socket)
+        .enter_as(args.landlock)
+        .map_err(|message| miette!("{message}"))?;
     if args.self_test {
         if self_test(&args.state_dir, fenced) {
             return Ok(());

@@ -19,6 +19,10 @@ path = "src/main.rs"
 name = "openshell-systemd-helper"
 path = "src/bin/openshell-systemd-helper.rs"
 
+[[bin]]
+name = "openshell-supervisor-fence"
+path = "src/bin/openshell-supervisor-fence.rs"
+
 # OpenShell does not publish its crates. They come from the release named
 # here, which is also the release the package builds openshell-supervisor
 # and openshell-sandbox from (packaging/suse): the three always match.
