@@ -222,7 +222,7 @@ echo "categories: ${level:-none}"
 check "the workload has a pair of categories" test -n "$level"
 check "its supervisor has the same pair" sh -c "[ \"$(categories_of "$sup")\" = \"$level\" ]"
 check "the workspace carries the pair" sh -c "ls -Zd $d/workspace | grep -q ':s0:$level '"
-XX
+check "the supervisor's files carry the pair" sh -c "ls -Zd $d/supervisor | grep -q ':s0:$level '"
 check "the credentials are the workloads' user's alone" sh -c "[ \"\$(stat -c '%U %a' $d/etc/sandbox.jwt)\" = 'openshell-sandbox 600' ]"
 
 section "what the workload can do"
