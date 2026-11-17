@@ -67,6 +67,33 @@ SELinux domains for the sandboxes of openshell-driver-systemd: one for a
 workload, one for its supervisor. A workload reaches its supervisor's
 control socket and no other service's.
 
+%package tests
+Summary:        Functional tests of openshell-driver-systemd
+Requires:       %{name} = %{version}
+Requires:       audit
+Requires:       curl
+Requires:       gcc
+Requires:       git-core
+Requires:       gzip
+Requires:       iproute2
+Requires:       make
+Requires:       policycoreutils
+Requires:       procps
+Requires:       python3
+Requires:       tar
+Requires:       util-linux
+Recommends:     %{name}-selinux = %{version}
+BuildArch:      noarch
+
+%description tests
+The functional tests of openshell-driver-systemd, for openQA and other
+systems that test a product with the packages of its repositories:
+sandboxes are created, used, stopped, started and deleted through a
+stock OpenShell gateway, and what a workload, a supervisor and the
+helper must not reach is tried. Each check becomes a result of its own
+(TAP and JUnit). The tests change the system they run on and refuse to
+start without --disposable.
+
 %prep
 %setup -q -a 1 -a 2
 # OpenShell's crates from its source tree, not from the vendored copies:
@@ -117,6 +144,9 @@ install -m 0644 systemd/*.service %{buildroot}%{_unitdir}/
 install -m 0644 systemd/user/*.service %{buildroot}%{_userunitdir}/
 install -D -m 0644 packaging/suse/%{name}.sysusers %{buildroot}%{_sysusersdir}/%{name}.conf
 install -D -m 0644 systemd/tmpfiles.d/%{name}.conf %{buildroot}%{_tmpfilesdir}/%{name}.conf
+install -d %{buildroot}%{_libexecdir}/%{name}/tests
+install -m 0755 test/vm/run-tests.sh test/vm/openshell-setup.sh %{buildroot}%{_libexecdir}/%{name}/tests/
+install -m 0644 test/vm/openshell-version %{buildroot}%{_libexecdir}/%{name}/tests/
 install -d %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}
 bzip2 -9 -c selinux/%{modulename}.pp >%{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
 
@@ -166,6 +196,13 @@ fi
 %{_userunitdir}/openshell-driver-systemd.service
 %{_sysusersdir}/%{name}.conf
 %{_tmpfilesdir}/%{name}.conf
+
+%files tests
+%dir %{_libexecdir}/%{name}
+%dir %{_libexecdir}/%{name}/tests
+%{_libexecdir}/%{name}/tests/run-tests.sh
+%{_libexecdir}/%{name}/tests/openshell-setup.sh
+%{_libexecdir}/%{name}/tests/openshell-version
 
 %files selinux
 %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2

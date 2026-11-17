@@ -4,8 +4,9 @@
 #
 # run-vm.sh: the functional tests in a disposable openSUSE Leap 16 VM.
 # Boots the cloud image under QEMU/KVM, turns SELinux on (enforcing),
-# installs OpenShell (test/vm/openshell-version) and the packages of a
-# directory, and runs run-tests.sh there.
+# installs the packages of a directory (the tests' among them) and
+# OpenShell (test/vm/openshell-version), and runs the installed
+# run-tests.sh there: what a test system such as openQA runs.
 #
 #   test/vm/run-vm.sh <rpm dir>
 #
@@ -138,16 +139,19 @@ if [ "$(vm 'getenforce 2>/dev/null || echo Missing')" != Enforcing ]; then
 	done
 fi
 
-log "copying the tests and the packages"
+log "installing the packages"
 vm 'rm -rf /root/driver-vm && mkdir -p /root/driver-vm/rpms'
 scp_opts=(-q -i "$work/key" -P "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
-scp "${scp_opts[@]}" "$here/openshell-setup.sh" "$here/openshell-version" "$here/run-tests.sh" root@127.0.0.1:/root/driver-vm/
 scp "${scp_opts[@]}" "$rpms"/*.rpm root@127.0.0.1:/root/driver-vm/rpms/
+# The tests come from their package, as on a test system.
+tests=/usr/libexec/openshell-driver-systemd/tests
+vm 'zypper -n --no-gpg-checks in --no-recommends /root/driver-vm/rpms/*.rpm' >"$work/install.log" 2>&1 ||
+	{ tail -n 40 "$work/install.log"; log "installing the packages failed"; exit 1; }
 
-vm 'bash /root/driver-vm/openshell-setup.sh' 2>&1 | tee "$work/openshell-setup.log"
+vm "$tests/openshell-setup.sh" 2>&1 | tee "$work/openshell-setup.log"
 [ "${PIPESTATUS[0]}" = 0 ] || { log "setting up OpenShell failed"; exit 1; }
 set +e
-vm "bash /root/driver-vm/run-tests.sh --disposable --results /root/driver-vm/results ${TEST_ARGS:-}" 2>&1 | tee "$work/test.log"
+vm "$tests/run-tests.sh --disposable --results /root/driver-vm/results ${TEST_ARGS:-}" 2>&1 | tee "$work/test.log"
 status=${PIPESTATUS[0]}
 set -e
 rm -rf "$work/results"
