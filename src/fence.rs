@@ -158,6 +158,8 @@ mod tests {
             outside.path().to_path_buf(),
         );
 
+        let unfenced = outside.join("file");
+
         let checked = fenced(fence, move |outcome| {
             if outcome == Outcome::None {
                 // A kernel without Landlock: nothing to hold to.
@@ -178,7 +180,7 @@ mod tests {
         });
         // The thread of the test itself is not fenced.
         assert_eq!(
-            std::fs::read_to_string(outside.join("file")).expect("outside the fence"),
+            std::fs::read_to_string(unfenced).expect("outside the fence"),
             "not for you"
         );
         if !checked {
