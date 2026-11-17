@@ -24,12 +24,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-audit
-          key: cargo-audit-0.21
+      # The newest: the advisory database's format moves on, and an old
+      # cargo-audit cannot read it (0.21 stops at an advisory with a
+      # CVSS 4.0 score).
       - name: cargo-audit
-        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked --version '^0.21'
+        run: cargo install cargo-audit --locked
       - name: Check Cargo.lock
         run: |
           ignore=()
