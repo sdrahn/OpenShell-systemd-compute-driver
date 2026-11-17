@@ -302,6 +302,7 @@ s = socket.socket(socket.AF_UNIX); s.bind(p); s.listen(1)
 c = socket.socket(socket.AF_UNIX); c.connect(p); a, _ = s.accept()
 c.sendall(b\"ok\"); print(a.recv(2).decode()); os.unlink(p)" | grep -qx ok'
 work "an archive is packed and unpacked" 'tar -czf repo.tar.gz repo && mkdir unpacked && tar -xzf repo.tar.gz -C unpacked && test -f unpacked/repo/file'
+work "a script written in /tmp runs" 'printf "#!/bin/sh\necho ran\n" >/tmp/agent-script && chmod +x /tmp/agent-script && /tmp/agent-script | grep -qx ran'
 work "temporary files" 't=$(mktemp) && echo x >$t && rm $t && d=$(mktemp -d) && touch $d/f && rm -r $d'
 work "its own processes: list, signal, wait" 'sleep 300 >/dev/null 2>&1 & p=$!; ps -o pid= -p $p | grep -q . && kill $p; wait $p; [ $? = 143 ]'
 work "the host is read: packages, release, kernel" 'rpm -q systemd | grep -q systemd && grep -q openSUSE /etc/os-release && uname -r | grep -q .'
