@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::future::Future;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -25,15 +24,10 @@ struct Args {
     )]
     admission_config_json: openshell_core::resource_admission::DriverAdmissionConfig,
 
+    /// The socket the gateway reaches the driver on. Only the user the
+    /// driver runs as is served there; there is no other way in.
     #[arg(long, env = "OPENSHELL_COMPUTE_DRIVER_SOCKET")]
-    bind_socket: Option<PathBuf>,
-
-    #[arg(
-        long,
-        env = "OPENSHELL_COMPUTE_DRIVER_BIND",
-        default_value = "127.0.0.1:50062"
-    )]
-    bind_address: SocketAddr,
+    bind_socket: PathBuf,
 
     #[arg(long, env = "OPENSHELL_LOG_LEVEL", default_value = "info")]
     log_level: String,
@@ -95,28 +89,19 @@ async fn main() -> Result<()> {
     .into_diagnostic()?;
 
     let service = ComputeDriverServer::new(ComputeDriverService::new(driver));
-    if let Some(socket_path) = args.bind_socket {
-        let listener = openshell_core::external_driver_socket::bind_private(&socket_path)
-            .map_err(|err| miette::miette!("{err}"))?;
-        let _cleanup =
-            openshell_core::external_driver_socket::SocketCleanup::new(socket_path.clone());
-        info!(socket = %socket_path.display(), "Starting systemd compute driver");
-        tonic::transport::Server::builder()
-            .add_service(service)
-            .serve_with_incoming_shutdown(
-                openshell_core::external_driver_socket::SameUidUnixIncoming::new(listener),
-                shutdown_signal(),
-            )
-            .await
-            .into_diagnostic()
-    } else {
-        info!(address = %args.bind_address, "Starting systemd compute driver");
-        tonic::transport::Server::builder()
-            .add_service(service)
-            .serve_with_shutdown(args.bind_address, shutdown_signal())
-            .await
-            .into_diagnostic()
-    }
+    let socket_path = args.bind_socket;
+    let listener = openshell_core::external_driver_socket::bind_private(&socket_path)
+        .map_err(|err| miette::miette!("{err}"))?;
+    let _cleanup = openshell_core::external_driver_socket::SocketCleanup::new(socket_path.clone());
+    info!(socket = %socket_path.display(), "Starting systemd compute driver");
+    tonic::transport::Server::builder()
+        .add_service(service)
+        .serve_with_incoming_shutdown(
+            openshell_core::external_driver_socket::SameUidUnixIncoming::new(listener),
+            shutdown_signal(),
+        )
+        .await
+        .into_diagnostic()
 }
 
 async fn select_shutdown_signal(
@@ -162,9 +147,28 @@ mod tests {
 
     #[test]
     fn defaults_name_the_helper_socket_and_no_tls() {
-        let args = Args::try_parse_from(["openshell-driver-systemd"]).expect("defaults parse");
+        let args = Args::try_parse_from([
+            "openshell-driver-systemd",
+            "--bind-socket",
+            "/run/user/1000/openshell/systemd-driver.sock",
+        ])
+        .expect("defaults parse");
         assert_eq!(args.helper_socket, PathBuf::from(DEFAULT_HELPER_SOCKET));
         assert!(args.gateway_tls_ca.is_none());
-        assert!(args.bind_socket.is_none());
+    }
+
+    #[test]
+    fn there_is_no_way_in_but_the_socket() {
+        assert!(Args::try_parse_from(["openshell-driver-systemd"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "openshell-driver-systemd",
+                "--bind-socket",
+                "/run/x.sock",
+                "--bind-address",
+                "127.0.0.1:50062",
+            ])
+            .is_err()
+        );
     }
 }

@@ -28,12 +28,10 @@ struct Args {
     /// What to do on a kernel that cannot hold the supervisor to its
     /// files: `required` does not start it, `best-effort` goes on with
     /// what the kernel offers, `off` asks for no fence.
-    #[arg(
-        long,
-        env = "OPENSHELL_SYSTEMD_SUPERVISOR_LANDLOCK",
-        value_enum,
-        default_value = "required"
-    )]
+    ///
+    /// An argument only, set in the unit: the supervisor's environment
+    /// comes with a launch, and a launch must not decide this.
+    #[arg(long, value_enum, default_value = "required")]
     landlock: Mode,
 
     /// The supervisor's runtime directory: its sockets and the proxy's

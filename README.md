@@ -227,9 +227,9 @@ that names this sandbox's files (its launch files, its runtime directory,
 the control socket's directory, its workspace to read) besides `/usr`,
 `/etc`, `/proc` and `/sys`, and then becomes the supervisor. The network is
 not part of this fence: what a sandbox may reach is OpenShell's policy,
-which the supervisor is there to hold. `--landlock`
-(`OPENSHELL_SYSTEMD_SUPERVISOR_LANDLOCK`, in a drop-in of the unit) has the
-same three values as the helper's.
+which the supervisor is there to hold. `--landlock` has the same three
+values as the helper's; it is an argument in the unit's `ExecStart=` only,
+since the supervisor's environment comes with a launch.
 
 The workload is behind a Landlock fence of OpenShell's own, from the
 sandbox's policy: `openshell-sandbox` sets it.

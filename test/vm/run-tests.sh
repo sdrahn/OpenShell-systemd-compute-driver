@@ -177,6 +177,7 @@ echo "--- the helper's test of its fence"
 /usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test 2>&1 | cut -c1-200
 check "the fence refuses root what the helper does not need" /usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test
 refuse "without the fence, the same test fails" /usr/libexec/openshell/openshell-systemd-helper --allow-user "$user" --self-test --landlock off
+check "the helper keeps few of root's rights" sh -c "c=\$(awk '\$1 == \"CapBnd:\" {print \$2}' /proc/\$(systemctl show openshell-systemd-helper.service -p MainPID --value)/status) && [ \"\$c\" = 000000000000001f ]"
 check "the helper runs in its domain" sh -c "tr -d '\\0' </proc/\$(systemctl show openshell-systemd-helper.service -p MainPID --value)/attr/current | grep -q ':openshell_systemd_helper_t:'"
 check "the sandbox units have their label" sh -c 'ls -Z /usr/lib/systemd/system/openshell-sandbox-workload@.service | grep -q openshell_sandbox_unit_file_t'
 check "the mount points exist without the helper having made them" test -d /.openshell/channel -a -d /sandbox -a -f /etc/openshell/auth/sandbox.jwt
@@ -269,6 +270,12 @@ refuse "in the namespace unit's domain, root cannot write in /etc" in_netns_doma
 check "the three units are active" systemctl is-active "openshell-sandbox-netns@$id.service" "openshell-sandbox-supervisor@$id.service" "openshell-sandbox-workload@$id.service"
 check "the supervisor is the stock program, started by its launcher" sh -c "[ \"\$(readlink /proc/$sup/exe)\" = /usr/libexec/openshell/openshell-supervisor ] && systemctl show openshell-sandbox-supervisor@$id.service -p ExecStart --value | grep -q openshell-supervisor-fence"
 check "the supervisor cannot gain privileges" sh -c "grep -qx 'NoNewPrivs:[[:space:]]*1' /proc/$sup/status"
+check "the supervisor's unit holds no other sandbox's files" sh -c "[ \"\$(nsenter -t $sup -m ls /var/lib/openshell/systemd)\" = $id ] && [ \"\$(nsenter -t $sup -m ls /run/openshell-sandbox)\" = $id ]"
+echo "the workload's /run: $(nsenter -t "$wl" -m ls /run 2>&1 | tr '\n' ' ')"
+refuse "the workload's unit holds the host's D-Bus socket" nsenter -t "$wl" -m test -e /run/dbus/system_bus_socket
+refuse "the workload's unit holds the journal's socket" nsenter -t "$wl" -m test -e /run/systemd/journal/socket
+refuse "the workload's unit holds the supervisors' runtime directories" nsenter -t "$wl" -m test -e /run/openshell-sandbox
+check "the workload has shared memory of its own" sh -c "[ \"\$(readlink /proc/$wl/ns/ipc)\" != \"\$(readlink /proc/1/ns/ipc)\" ]"
 check "the supervisor runs in its domain" sh -c "tr -d '\\0' </proc/$sup/attr/current | grep -q ':openshell_supervisor_t:'"
 check "the workload runs in its domain" sh -c "tr -d '\\0' </proc/$wl/attr/current | grep -q ':openshell_sandbox_t:'"
 check "the supervisor is not root" sh -c "[ \"\$(stat -c %U /proc/$sup)\" = openshell-sandbox ]"
@@ -454,6 +461,18 @@ check "without the fence, a supervisor's user reads another sandbox's token" as_
 refuse "behind its fence, it cannot read another sandbox's token" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
 refuse "behind its fence, it cannot read another sandbox's workspace" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"
 refuse "behind its fence, it cannot list the other supervisor's runtime directory" as_supervisor_of "$id" required /usr/bin/ls "/run/openshell-sandbox/$idb"
+# One supervisor's processes against another's, in the supervisor's SELinux
+# domain and with the first sandbox's categories: a signal.
+install -m 0755 /usr/bin/kill /usr/local/bin/driver-test-kill
+chcon -t openshell_supervisor_exec_t /usr/local/bin/driver-test-kill
+signals_as() {
+	systemd-run --quiet --wait --collect -p User=openshell-sandbox \
+		-p "SELinuxContext=system_u:system_r:openshell_supervisor_t:s0:$1" \
+		/usr/local/bin/driver-test-kill -0 "$2"
+}
+check "in its domain, a supervisor's program signals a process of its own sandbox" signals_as "$levelb" "$supb"
+refuse "with another sandbox's categories, it cannot signal that supervisor" signals_as "$level" "$supb"
+rm -f /usr/local/bin/driver-test-kill
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
 refuse "a workload cannot signal the other supervisor" inside "$name" sh -c "kill -0 $supb"
 refuse "a workload cannot signal the other workload" inside "$name" sh -c "kill -0 $wlb"
@@ -490,8 +509,8 @@ check "the audit log is being written" sh -c 'cat /var/log/audit/audit.log* | gr
 # socket and journald's, systemctl in a sandbox tries D-Bus, and the
 # test's own cat tries another sandbox's files, and the programs started
 # in the namespace unit's domain try /etc.
-check "the D-Bus attempt was denied by the policy" grep -q 'system_bus_socket.*openshell_sandbox_t' "$results/avc.txt"
-grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-cat" .*scontext=[^ ]*:openshell_sandbox_t:|comm="(test|touch)" .*scontext=[^ ]*:openshell_sandbox_netns_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
+check "a refused read of another sandbox's file is in the audit log" grep -q 'comm="driver-test-cat".*openshell_sandbox_t' "$results/avc.txt"
+grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-cat" .*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-kil" .*scontext=[^ ]*:openshell_supervisor_t:|comm="(test|touch)" .*scontext=[^ ]*:openshell_sandbox_netns_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
 sed -E 's/^.*avc: +denied +//; s/ pid=[0-9]+//; s/ ino=[0-9]+//' "$results/avc-unexpected.txt" | sort | uniq -c | cut -c1-300
 if [ -n "$discovery" ]; then
 	echo "--- every kind of denial once: source target class { permissions } commands, paths"

@@ -1,3 +1,6 @@
 # Advisories that the Vulnerabilities job accepts: one ID a line, then
 # the reason. An entry goes when the crate is updated; the job lists the
 # accepted ones at every run.
+RUSTSEC-2026-0459 libsqlite3-sys: in Cargo.lock for an optional feature of OpenShell's crates that the driver does not build (cargo tree -i shows no user); the fixed version needs a newer sqlx than OpenShell v0.1.8 has
+RUSTSEC-2024-0449 unsafe-libyaml: unmaintained; in Cargo.lock only, the driver does not build it (cargo tree -i shows no user)
+RUSTSEC-2026-0543 chrono: unmaintained, no fixed version; comes with openshell-ocsf of OpenShell v0.1.8, which the driver's crates depend on

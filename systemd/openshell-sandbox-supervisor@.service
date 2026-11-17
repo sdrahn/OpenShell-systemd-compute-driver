@@ -27,6 +27,13 @@ BindReadOnlyPaths=/var/lib/openshell/systemd/%i/etc/ca.crt:/etc/openshell/tls/cl
 # The supervisor's sockets and its proxy's keys, its own and gone when it
 # stops.
 RuntimeDirectory=openshell-sandbox/%i
+# Every sandbox's supervisor is the same user. This one's unit holds its
+# own sandbox's files and runtime directory and no other's: their sockets
+# are not there to connect to.
+TemporaryFileSystem=/var/lib/openshell:ro
+TemporaryFileSystem=/run/openshell-sandbox:ro
+BindPaths=/run/openshell-sandbox/%i
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/workspace
 RuntimeDirectoryMode=0700
 NoNewPrivileges=yes
 CapabilityBoundingSet=
