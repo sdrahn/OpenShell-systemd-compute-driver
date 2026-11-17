@@ -54,11 +54,11 @@ init_nnp_daemon_domain(openshell_supervisor_t)
 mcs_constrained(openshell_sandbox_t)
 mcs_constrained(openshell_supervisor_t)
 
-# The helper. Its level spans every category: it gives each sandbox's
+# The helper. It is not held to categories: it gives each sandbox's
 # files theirs.
 type openshell_systemd_helper_t;
 type openshell_systemd_helper_exec_t;
-init_ranged_daemon_domain(openshell_systemd_helper_t, openshell_systemd_helper_exec_t, s0 - mcs_systemhigh)
+init_daemon_domain(openshell_systemd_helper_t, openshell_systemd_helper_exec_t)
 
 # The directory of the helper's socket.
 type openshell_systemd_helper_runtime_t;
