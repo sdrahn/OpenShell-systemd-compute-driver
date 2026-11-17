@@ -1,6 +1,6 @@
 # Packaging for SLES 16 and openSUSE Leap 16
 
-`openshell-driver-systemd.spec` builds two packages:
+`openshell-driver-systemd.spec` builds four packages:
 
 - `openshell-driver-systemd`: the driver, its helper, the unit
   templates, the user `openshell-sandbox`, and `openshell-supervisor`
@@ -9,6 +9,14 @@
   host: with its other drivers they come inside container images.
 - `openshell-driver-systemd-selinux`: the policy module. It is
   installed with the first where SELinux's targeted policy is.
+- `openshell-driver-systemd-docs`: the guide (`docs/user-guide`) and
+  the security review in `/usr/share/openshell-driver-systemd/docs`,
+  and `packaging/mcp-docs/openshell-driver-systemd.yaml` in
+  `/usr/share/mcp-docs/collections.d/`. Not as `%doc`: a system
+  installed without documentation would leave it out. It is installed
+  with the first where `mcp-docs` is.
+- `openshell-driver-systemd-tests`: the functional tests
+  (`test/openqa/README.md`).
 
 ## Sources
 

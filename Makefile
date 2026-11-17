@@ -10,11 +10,13 @@ all: build
 build:
 	cargo build --release --locked
 
-# What a pull request must pass before it is pushed.
+# What a pull request must pass before it is pushed. check-docs: the
+# guide's structure, as mcp-docs reads it.
 check: fmt-check lint test
 	tools/changelog check
 	tools/openshell-version >/dev/null
 	tools/check-tree
+	tools/check-docs
 
 fmt-check:
 	cargo fmt --all -- --check

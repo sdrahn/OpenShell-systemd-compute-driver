@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+#
+# The collection file for mcp-docs (github.com/sdrahn/mcp-docs), installed
+# by openshell-driver-systemd-docs in /usr/share/mcp-docs/collections.d/.
+# mcp-docs serves the collection openshell-driver-systemd from it once
+# both are installed. An administrator replaces it with a file of the
+# same name in /etc/mcp-docs/collections.d/; an empty file there disables
+# it.
+name: openshell-driver-systemd
+title: OpenShell systemd compute driver documentation
+root: /usr/share/openshell-driver-systemd/docs
+description: >
+  openshell-driver-systemd, the OpenShell compute driver that runs
+  sandboxes as systemd units on this host (SLES 16, Leap 16), for the
+  installed version: the guide (10 chapters: what the driver is,
+  installing and setting up, working in a sandbox, network policy with a
+  worked example, the security model with SELinux and Landlock,
+  operation, troubleshooting with the error messages, reference of every
+  setting, the helper protocol, what the tests hold) and the security
+  review before the first release.
+# Which file answers which question.
+index: user-guide/README.md
+include: ["**/*.md"]
+instructions: >
+  Start with user-guide/README.md, which maps questions to sections.
+  This machine's sandboxes are not described here: openshell sandbox
+  list and openshell sandbox get NAME give them, systemctl list-units
+  'openshell-sandbox-*' their units. Policies, providers and the
+  openshell command are OpenShell's documentation. Inside a sandbox,
+  systemctl and journalctl do not work (user-guide/03-sandboxes.md#cannot).

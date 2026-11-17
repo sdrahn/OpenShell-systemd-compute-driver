@@ -82,6 +82,32 @@ jobs:
           name: rpms
           path: rpms/*.rpm
 
+  # The guide as an agent gets it: the docs package installed, and
+  # mcp-docs serving it from the package's collection file.
+  docs:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: registry.opensuse.org/opensuse/leap:16.0
+    env:
+      MCP_DOCS_MODULE: github.com/sdrahn/mcp-docs/cmd/mcp-docs@main
+    steps:
+      - name: Disable the codec repository
+        run: zypper -n mr -d repo-openh264 >/dev/null 2>&1 || true
+      - name: Tools
+        run: zypper -n --gpg-auto-import-keys in --no-recommends git tar gzip findutils go
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpms
+          path: rpms
+      - name: Install the guide's package
+        run: zypper -n in --allow-unsigned-rpm --no-recommends rpms/openshell-driver-systemd-docs-*.rpm
+      - name: The guide served by mcp-docs
+        run: |
+          GOBIN=/usr/local/bin go install "$MCP_DOCS_MODULE"
+          test/docs/mcp-docs-smoke.sh /usr/local/bin/mcp-docs
+
   # The functional tests on those packages, in a Leap 16 VM with SELinux
   # enforcing and a stock OpenShell gateway: the script of the tests'
   # package, as openQA runs it (test/openqa).
