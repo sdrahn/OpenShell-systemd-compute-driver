@@ -472,11 +472,11 @@ signals_as() {
 		/usr/local/bin/driver-test-kill "$2" "$3"
 }
 check "in its domain, a supervisor's program signals a process of its own sandbox" signals_as "$levelb" -0 "$supb"
-# Not checks: what the policy of the distribution does with a signal from
-# another sandbox's categories. Every supervisor is the same user and
-# they share the host's process IDs (docs/security-review-0.1.md, S2).
+refuse "with another sandbox's categories, it cannot send that supervisor a signal" signals_as "$level" -CONT "$supb"
+# Not a check: signal 0, which only asks whether a process is there, is
+# not held to the categories by the distribution's policy
+# (docs/security-review-0.1.md, S2).
 echo "another sandbox's categories, signal 0: $(signals_as "$level" -0 "$supb" && echo delivered || echo refused)"
-echo "another sandbox's categories, SIGCONT: $(signals_as "$level" -CONT "$supb" && echo delivered || echo refused)"
 rm -f /usr/local/bin/driver-test-kill
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
 refuse "a workload cannot signal the other supervisor" inside "$name" sh -c "kill -0 $supb"

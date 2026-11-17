@@ -234,6 +234,13 @@ since the supervisor's environment comes with a launch.
 The workload is behind a Landlock fence of OpenShell's own, from the
 sandbox's policy: `openshell-sandbox` sets it.
 
+## Security review
+
+[docs/security-review-0.1.md](docs/security-review-0.1.md) is the review
+before the first release: what was found, what was fixed and what stays,
+among it that one supervisor can signal another where the SELinux module is
+not loaded, and that the helper can write a drop-in for any unit.
+
 ## Not supported
 
 - Images: there is no root file system but the host's.
