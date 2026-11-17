@@ -27,9 +27,16 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 git -C "$root" archive --format=tar.gz --prefix="$name-$version/" -o "$out/$name-$version.tar.gz" HEAD
-curl -fsSL --retry 3 -o "$work/openshell.tar.gz" "https://github.com/NVIDIA/OpenShell/archive/refs/tags/$release.tar.gz"
-# GitHub names the directory OpenShell-<release without v>; the spec
-# expects openshell-<release without v>.
+# By the commit Cargo.lock names for the release, not by the tag: a tag
+# can be moved, and the driver's own crates are locked to that commit.
+commit=$(grep -m1 -o 'NVIDIA/OpenShell?tag=[^#]*#[0-9a-f]*' "$root/Cargo.lock" | sed 's/.*#//')
+[ "${#commit}" = 40 ] || { echo "no commit of OpenShell in Cargo.lock" >&2; exit 1; }
+grep -q "NVIDIA/OpenShell?tag=$release#$commit" "$root/Cargo.lock" ||
+	{ echo "Cargo.lock is not at OpenShell $release" >&2; exit 1; }
+echo "OpenShell $release at $commit"
+curl -fsSL --retry 3 -o "$work/openshell.tar.gz" "https://github.com/NVIDIA/OpenShell/archive/$commit.tar.gz"
+# GitHub names the directory after the commit; the spec expects
+# openshell-<release without v>.
 mkdir "$work/src"
 tar -xzf "$out/$name-$version.tar.gz" -C "$work/src"
 tree=$work/src/$name-$version

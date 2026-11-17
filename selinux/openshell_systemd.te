@@ -93,7 +93,9 @@ files_mountpoint(openshell_systemd_var_lib_t)
 
 # A launch's credentials and descriptor: the supervisor's alone.
 type openshell_supervisor_conf_t;
-files_type(openshell_supervisor_conf_t)
+# A security file: not among the files a domain reads because it may read
+# "all files but the security files", as the workload's does.
+files_security_file(openshell_supervisor_conf_t)
 files_mountpoint(openshell_supervisor_conf_t)
 
 # What the two share: the bootstrap file and the control socket.

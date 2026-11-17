@@ -45,6 +45,17 @@ const MOUNT_POINT_FILES: &[&str] = &[
 ];
 
 /// The workload's resolver is `openshell-sandbox`'s policy DNS.
+/// The programs the helper runs, by their paths: not whatever a `PATH`
+/// finds first.
+const SYSTEMCTL: &str = "/usr/bin/systemctl";
+const CHCON: &str = "/usr/bin/chcon";
+const STAT: &str = "/usr/bin/stat";
+
+/// How long a client may take to send its request. Requests are served
+/// one at a time, so a client that sends nothing would hold up every
+/// other.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 const RESOLV_CONF: &str = "nameserver 127.0.0.53\noptions edns0 trust-ad\n";
 
 #[derive(Parser)]
@@ -224,11 +235,19 @@ fn unit(kind: &str, sandbox_id: &str) -> String {
 }
 
 /// Creates a directory with exactly `mode`, owned by `uid:gid`.
+///
+/// Owner and mode are set on the opened directory, not by its path: some
+/// of these directories are inside one that the workloads' user owns, and
+/// a name there could be made a symbolic link between two steps.
 fn create_directory(path: &Path, mode: u32, uid: u32, gid: u32) -> std::io::Result<()> {
     std::fs::DirBuilder::new().mode(mode).create(path)?;
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW)
+        .open(path)?;
     // The mode given at creation is subject to the umask.
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
-    std::os::unix::fs::chown(path, Some(uid), Some(gid))
+    directory.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    std::os::unix::fs::fchown(&directory, Some(uid), Some(gid))
 }
 
 /// Creates a file that must not exist yet, with exactly `mode`, owned by
@@ -243,7 +262,32 @@ fn create_file(path: &Path, content: &[u8], mode: u32, uid: u32, gid: u32) -> st
         .open(path)?;
     file.write_all(content)?;
     file.set_permissions(std::fs::Permissions::from_mode(mode))?;
-    std::os::unix::fs::chown(path, Some(uid), Some(gid))
+    // On the file that was created, whatever its name points to by now.
+    std::os::unix::fs::fchown(&file, Some(uid), Some(gid))
+}
+
+/// Reads a file that must be a regular file, not a link to one.
+fn read_plain_file(path: &Path) -> std::io::Result<String> {
+    use std::io::Read as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(content)
+}
+
+/// The environment a supervisor may be given: `OpenShell`'s own settings.
+/// Not this driver's (`OPENSHELL_SYSTEMD_…`), which belong to the
+/// administrator, and nothing that changes how the unit's programs are
+/// loaded (`LD_PRELOAD`, `PATH`).
+fn supervisor_variable(name: &str) -> bool {
+    name.starts_with("OPENSHELL_") && !name.starts_with("OPENSHELL_SYSTEMD_")
 }
 
 fn remove_tree(path: &Path) -> std::io::Result<()> {
@@ -281,16 +325,24 @@ fn relabel(arguments: &[&std::ffi::OsStr]) -> std::result::Result<(), String> {
 /// Whether the policy module labels the programs: then the units run in
 /// its domains, and a sandbox gets categories. `stat` prints a file's
 /// `SELinux` context with `%C`.
-fn policy_module_in_use() -> bool {
+///
+/// Where `SELinux` is on and the label cannot be read, that is an error:
+/// to go on would be to run every sandbox without categories.
+fn policy_module_in_use() -> std::result::Result<bool, String> {
     if !Path::new("/sys/fs/selinux/enforce").exists() {
-        return false;
+        return Ok(false);
     }
-    std::process::Command::new("stat")
+    let output = std::process::Command::new(STAT)
         .args(["-c", "%C", "/usr/libexec/openshell/openshell-sandbox"])
         .output()
-        .is_ok_and(|output| {
-            String::from_utf8_lossy(&output.stdout).contains(":openshell_sandbox_exec_t:")
-        })
+        .map_err(|error| format!("{STAT}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{STAT}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).contains(":openshell_sandbox_exec_t:"))
 }
 
 /// Gives files a level, as `chcon -l` does.
@@ -298,7 +350,7 @@ fn set_level(level: &str, recursive: bool, paths: &[PathBuf]) -> std::result::Re
     if paths.is_empty() {
         return Ok(());
     }
-    let mut command = std::process::Command::new("chcon");
+    let mut command = std::process::Command::new(CHCON);
     if recursive {
         command.arg("-R");
     }
@@ -384,7 +436,7 @@ impl Helper {
         let dir = self.sandbox_dir(sandbox_id);
         let workspace = dir.join("workspace");
         let level = categories.level();
-        let labelled = std::process::Command::new("stat")
+        let labelled = std::process::Command::new(STAT)
             .args(["-c", "%C"])
             .arg(&workspace)
             .output()
@@ -453,11 +505,25 @@ impl Helper {
         provision: &Provision,
     ) -> std::result::Result<Option<Categories>, String> {
         let describe = |what: &str, error: std::io::Error| format!("{what}: {error}");
+        if let Some(name) = provision
+            .environment
+            .keys()
+            .find(|name| !supervisor_variable(name))
+        {
+            return Err(format!(
+                "environment variable {name:?} is not one a supervisor may be given"
+            ));
+        }
         let environment = envfile::render(&provision.environment).map_err(|e| e.to_string())?;
-        let categories = if self.categories {
-            Some(self.categories_of(&provision.sandbox_id)?)
-        } else {
-            None
+        // A sandbox that has categories keeps them, whatever this start of
+        // the helper found: its files carry them.
+        let kept = self
+            .metadata(&provision.sandbox_id)
+            .and_then(|metadata| metadata.categories);
+        let categories = match kept {
+            Some(categories) => Some(categories),
+            None if self.categories => Some(self.categories_of(&provision.sandbox_id)?),
+            None => None,
         };
         let metadata = serde_json::to_vec(&Metadata {
             name: provision.name.clone(),
@@ -468,7 +534,7 @@ impl Helper {
         let (uid, gid) = (self.workload_uid, self.workload_gid);
         let dir = self.sandbox_dir(&provision.sandbox_id);
         let sandbox_token = if provision.sandbox_token.is_empty() {
-            std::fs::read_to_string(dir.join("etc/sandbox.jwt"))
+            read_plain_file(&dir.join("etc/sandbox.jwt"))
                 .ok()
                 .filter(|token| !token.is_empty())
                 .ok_or("no gateway token, and none is kept from an earlier launch")?
@@ -486,7 +552,7 @@ impl Helper {
             "etc",
             "supervisor.env",
             "resolv.conf",
-            "meta.json",
+            "meta.json.new",
         ] {
             remove_tree(&dir.join(name)).map_err(|e| describe(name, e))?;
         }
@@ -557,19 +623,22 @@ impl Helper {
         if !workspace.exists() {
             create_directory(&workspace, 0o700, uid, gid).map_err(|e| describe("workspace", e))?;
         }
+        // Last, and in one step: until then the metadata of the launch
+        // before stands, with the sandbox's categories.
         create_file(
-            &dir.join("meta.json"),
+            &dir.join("meta.json.new"),
             &metadata,
             0o600,
             self.owner_uid,
             self.owner_gid,
         )
+        .and_then(|()| std::fs::rename(dir.join("meta.json.new"), dir.join("meta.json")))
         .map_err(|e| describe("meta.json", e))?;
         Ok(categories)
     }
 
     async fn systemctl(arguments: &[&str]) -> std::result::Result<String, String> {
-        let output = tokio::process::Command::new("systemctl")
+        let output = tokio::process::Command::new(SYSTEMCTL)
             .args(arguments)
             .output()
             .await
@@ -590,7 +659,7 @@ impl Helper {
     /// `systemctl is-active` exits non-zero for every state but active;
     /// the state is on its standard output either way.
     async fn active_state(unit: &str) -> String {
-        match tokio::process::Command::new("systemctl")
+        match tokio::process::Command::new(SYSTEMCTL)
             .args(["is-active", unit])
             .output()
             .await
@@ -600,10 +669,10 @@ impl Helper {
         }
     }
 
-    /// What systemd says of a sandbox's units and their last log lines,
-    /// for the error of a start that failed. A unit's log may hold what
-    /// the supervisor or `openshell-sandbox` printed, never a credential:
-    /// neither logs one.
+    /// What systemd says of a sandbox's units, for the error of a start
+    /// that failed: their states and results, without their log lines. A
+    /// unit's log holds what a workload printed, and the error goes back
+    /// to whoever asked for the start; the log is in the journal.
     async fn diagnose(sandbox_id: &str) -> String {
         const LIMIT: usize = 6000;
         let units = [
@@ -611,10 +680,10 @@ impl Helper {
             unit("supervisor", sandbox_id),
             unit("workload", sandbox_id),
         ];
-        let mut arguments = vec!["status", "--no-pager", "--full", "--lines=15"];
+        let mut arguments = vec!["status", "--no-pager", "--full", "--lines=0"];
         arguments.extend(units.iter().map(String::as_str));
         // `systemctl status` exits non-zero for units that are not active.
-        let status = match tokio::process::Command::new("systemctl")
+        let status = match tokio::process::Command::new(SYSTEMCTL)
             .args(&arguments)
             .output()
             .await
@@ -789,15 +858,21 @@ impl Helper {
 
     async fn serve(&self, mut stream: UnixStream) {
         let mut encoded = Vec::new();
-        let read = (&mut stream)
-            .take(MAX_MESSAGE_BYTES)
-            .read_to_end(&mut encoded)
-            .await;
+        let read = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            (&mut stream)
+                .take(MAX_MESSAGE_BYTES)
+                .read_to_end(&mut encoded),
+        )
+        .await;
         let response = match read {
-            Err(error) => Response::Error {
+            Err(_) => Response::Error {
+                message: "the request did not arrive in time".to_string(),
+            },
+            Ok(Err(error)) => Response::Error {
                 message: format!("read the request: {error}"),
             },
-            Ok(_) => match serde_json::from_slice::<Request>(&encoded) {
+            Ok(Ok(_)) => match serde_json::from_slice::<Request>(&encoded) {
                 Ok(request) => self.handle(request).await,
                 Err(error) => Response::Error {
                     message: format!("unreadable request: {error}"),
@@ -872,7 +947,7 @@ fn main() -> Result<()> {
     ])
     .map_err(|message| miette!("{message}"))?;
     relabel(&[args.state_dir.as_os_str()]).map_err(|message| miette!("{message}"))?;
-    let categories = policy_module_in_use();
+    let categories = policy_module_in_use().map_err(|message| miette!("{message}"))?;
     if let Some(parent) = args.socket.parent() {
         std::fs::create_dir_all(parent).into_diagnostic()?;
     }
@@ -1190,6 +1265,69 @@ mod tests {
         let error = helper.write_launch_files(&bad).expect_err("refused");
         assert!(error.contains("OPENSHELL_LOG_LEVEL"), "{error}");
         assert!(!state.path().join(ID).join("supervisor.env").exists());
+    }
+
+    #[test]
+    fn a_supervisor_is_given_only_openshells_own_variables() {
+        let state = tempfile::tempdir().expect("state directory");
+        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        let helper = helper(state.path());
+        for name in [
+            "LD_PRELOAD",
+            "PATH",
+            "OPENSHELL_SYSTEMD_SUPERVISOR_LANDLOCK",
+            "openshell_sandbox",
+        ] {
+            let mut bad = provision("token");
+            bad.environment.insert(name.to_string(), "x".to_string());
+            let error = helper.write_launch_files(&bad).expect_err("refused");
+            assert!(error.contains(name), "{error}");
+            assert!(!state.path().join(ID).join("supervisor.env").exists());
+        }
+    }
+
+    #[test]
+    fn categories_outlive_a_helper_that_finds_no_policy_module() {
+        let state = tempfile::tempdir().expect("state directory");
+        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        let mut helper = helper(state.path());
+        helper.categories = true;
+        let first = helper
+            .write_launch_files(&provision("token-one"))
+            .expect("first launch");
+        assert!(first.is_some());
+        helper.categories = false;
+        let second = helper
+            .write_launch_files(&provision(""))
+            .expect("second launch");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_launch_that_fails_leaves_the_metadata_of_the_one_before() {
+        let state = tempfile::tempdir().expect("state directory");
+        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        let mut helper = helper(state.path());
+        helper.categories = true;
+        let first = helper
+            .write_launch_files(&provision("token-one"))
+            .expect("first launch");
+        let mut bad = provision("");
+        bad.environment
+            .insert("OPENSHELL_LOG_LEVEL".to_string(), "a\nb".to_string());
+        helper.write_launch_files(&bad).expect_err("refused");
+        assert_eq!(helper.metadata(ID).expect("metadata").categories, first);
+    }
+
+    #[test]
+    fn a_kept_token_is_not_read_through_a_link() {
+        let state = tempfile::tempdir().expect("state directory");
+        let secret = state.path().join("elsewhere");
+        std::fs::write(&secret, "not-a-token").expect("another file");
+        let link = state.path().join("link");
+        std::os::unix::fs::symlink(&secret, &link).expect("link");
+        assert!(read_plain_file(&link).is_err());
+        assert_eq!(read_plain_file(&secret).expect("plain file"), "not-a-token");
     }
 
     #[tokio::test]

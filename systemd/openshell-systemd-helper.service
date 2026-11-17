@@ -16,6 +16,11 @@ ExecStart=/usr/libexec/openshell/openshell-systemd-helper
 # The directory of its socket.
 RuntimeDirectory=openshell-systemd-helper
 RuntimeDirectoryMode=0755
+# Of root's rights, those for files that are another user's; no other
+# kind of socket than a local one.
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 Restart=on-failure
 RestartSec=5
 

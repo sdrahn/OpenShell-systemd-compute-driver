@@ -26,15 +26,22 @@ PrivateNetwork=yes
 # workload has a process ID namespace of its own, so that it can neither
 # see nor signal them. Needs systemd 257.
 PrivatePIDs=yes
+# Shared memory and message queues of its own (the namespace unit's):
+# every workload is the same user, and the host's would be a way from one
+# sandbox to another.
+PrivateIPC=yes
 BindPaths=/var/lib/openshell/systemd/%i/workspace:/sandbox
 BindPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
 BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control
 BindReadOnlyPaths=/var/lib/openshell/systemd/%i/resolv.conf:/etc/resolv.conf
+# Nothing of the host's /run: the sockets of its services are there
+# (D-Bus, the journal), which a network namespace does not keep away, and
+# the supervisors' runtime directories.
+TemporaryFileSystem=/run:ro
 TemporaryFileSystem=/run/openshell-supervisor-ca:mode=0777
 # The supervisors run as the same user: none of their files, of this
 # sandbox or another, is in the workload's mount namespace.
 TemporaryFileSystem=/var/lib/openshell:ro
-TemporaryFileSystem=/run/openshell-sandbox:ro
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=

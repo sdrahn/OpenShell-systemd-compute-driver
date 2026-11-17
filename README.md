@@ -224,15 +224,22 @@ The supervisor is the stock program, and every sandbox's supervisor is the
 same user: file modes would let one read another sandbox's credentials. Its
 unit starts it through `openshell-supervisor-fence`, which enters a fence
 that names this sandbox's files (its launch files, its runtime directory,
-the control socket's directory, its workspace to read) besides `/usr`,
+the control socket's directory) besides `/usr`,
 `/etc`, `/proc` and `/sys`, and then becomes the supervisor. The network is
 not part of this fence: what a sandbox may reach is OpenShell's policy,
-which the supervisor is there to hold. `--landlock`
-(`OPENSHELL_SYSTEMD_SUPERVISOR_LANDLOCK`, in a drop-in of the unit) has the
-same three values as the helper's.
+which the supervisor is there to hold. `--landlock` has the same three
+values as the helper's; it is an argument in the unit's `ExecStart=` only,
+since the supervisor's environment comes with a launch.
 
 The workload is behind a Landlock fence of OpenShell's own, from the
 sandbox's policy: `openshell-sandbox` sets it.
+
+## Security review
+
+[docs/security-review-0.1.md](docs/security-review-0.1.md) is the review
+before the first release: what was found, what was fixed and what stays,
+among it that one supervisor can signal another where the SELinux module is
+not loaded, and that the helper can write a drop-in for any unit.
 
 ## Not supported
 
