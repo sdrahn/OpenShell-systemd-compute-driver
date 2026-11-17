@@ -47,6 +47,7 @@ The review before the first release is next to this guide:
 | Why does `systemctl` or `journalctl` not work in a sandbox? | [03-sandboxes.md#cannot](03-sandboxes.md#cannot) |
 | How do I let a program reach one host? | [04-network-policy.md#example](04-network-policy.md#example) |
 | Why is a request refused although the host is allowed? | [04-network-policy.md#binaries](04-network-policy.md#binaries) |
+| How does a sandbox reach a host with a private CA? | [04-network-policy.md#private-ca](04-network-policy.md#private-ca) |
 | Can one sandbox reach another's files? | [05-security.md#between-sandboxes](05-security.md#between-sandboxes) |
 | What is weaker without SELinux? | [05-security.md#without-selinux](05-security.md#without-selinux) |
 | What are the known limits? | [05-security.md#limits](05-security.md#limits) |

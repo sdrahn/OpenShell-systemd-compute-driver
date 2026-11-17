@@ -110,6 +110,27 @@ that cannot hold every rule. This is OpenShell's setting for the
 workload, not the one for the helper and the supervisor in
 [chapter 5](05-security.md#landlock).
 
+## A host with a private certificate authority {#private-ca}
+
+For an endpoint with `protocol: rest` (or `mcp`) the supervisor ends
+the workload's TLS connection and opens its own to the host, which it
+verifies with the CA certificates of the host it runs on: on SLES and
+openSUSE `/etc/ssl/ca-bundle.pem`. A host whose certificate a private
+CA signed is reached once that CA is in the host's trust store:
+
+```shell
+cp private-ca.pem /etc/pki/trust/anchors/
+update-ca-certificates
+```
+
+A sandbox's supervisor reads it when the sandbox starts; restart the
+sandboxes that run.
+
+OpenShell's own setting for this, `additional_ca_bundle` in
+`[openshell.supervisor.network]` of `gateway.toml`, is for its
+container drivers. With an external compute driver such as this one
+OpenShell 0.1.8 refuses the setting, and the gateway does not start.
+
 ## Who decides what {#who}
 
 | Decision | Made by | Where |

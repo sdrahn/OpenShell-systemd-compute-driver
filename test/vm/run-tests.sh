@@ -133,6 +133,15 @@ user_of() { cat "$state/$1/uid" 2>/dev/null; }
 # What is refused, the kernel's own check of users refuses.
 as_user() { setpriv --reuid "$1" --regid "$1" --clear-groups "${@:2}"; }
 main_pid() { systemctl show "$1" -p MainPID --value; }
+# eventually_ok SECONDS COMMAND…: the command succeeds within that time.
+eventually_ok() {
+	local deadline=$((SECONDS + $1))
+	shift
+	until "$@"; do
+		[ "$SECONDS" -ge "$deadline" ] && return 1
+		sleep 1
+	done
+}
 # The user a sandbox's workload runs as right now.
 user_of_running() { stat -c %u "/proc/$(main_pid "openshell-sandbox-workload@$1.service")"; }
 # has FILE PATTERN / lacks FILE PATTERN: a line of the workload's report.
@@ -473,6 +482,60 @@ else
 	skip "a copy in /tmp that the policy names reaches the host" "--offline"
 fi
 
+section "a host with a private CA"
+# An HTTPS server on the host's loopback with a certificate of a CA of its
+# own, which goes into the host's trust store. A sandbox reaches it as
+# host.openshell.internal; its supervisor ends the connection's TLS and
+# verifies the server with the host's CA certificates. No Internet.
+pca=$results/private-ca
+mkdir -p "$pca"
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=driver-test CA" \
+	-keyout "$pca/ca.key" -out "$pca/ca.pem" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -subj "/CN=host.openshell.internal" \
+	-keyout "$pca/server.key" -out "$pca/server.csr" >/dev/null 2>&1
+printf 'subjectAltName=DNS:host.openshell.internal\n' >"$pca/ext"
+check "a server certificate of a private CA is made" openssl x509 -req -in "$pca/server.csr" -CA "$pca/ca.pem" \
+	-CAkey "$pca/ca.key" -CAcreateserial -days 2 -extfile "$pca/ext" -out "$pca/server.pem"
+mkdir -p "$pca/www" && echo private >"$pca/www/index.html"
+systemd-run --quiet --unit=driver-test-https -p WorkingDirectory="$pca/www" /usr/bin/python3 -c '
+import http.server, ssl
+server = http.server.HTTPServer(("127.0.0.1", 18444), http.server.SimpleHTTPRequestHandler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("'"$pca"'/server.pem", "'"$pca"'/server.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()'
+check "the server answers on the host" eventually_ok 20 sh -c "curl -sS --cacert '$pca/ca.pem' --resolve host.openshell.internal:18444:127.0.0.1 https://host.openshell.internal:18444/ | grep -qx private"
+install -m 0644 "$pca/ca.pem" /etc/pki/trust/anchors/driver-test-ca.pem
+check "the private CA goes into the host's trust store" update-ca-certificates
+cat >"$results/private-policy.yaml" <<'POLICY'
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only: [/bin, /usr, /lib, /proc, /dev/urandom, /app, /etc, /var/log]
+  read_write: [/sandbox, /tmp, /dev/null]
+landlock:
+  compatibility: best_effort
+network_policies:
+  private:
+    name: private-ca
+    endpoints:
+      - host: host.openshell.internal
+        port: 18444
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/bin/curl }
+POLICY
+check "a sandbox for the private host is created" timeout 300 openshell sandbox create --name private --policy "$results/private-policy.yaml" --detach -- sleep 3600
+check "it becomes ready" wait_phase private Ready
+echo "the private host from the sandbox: $(inside private /usr/bin/curl -sS -m 30 https://host.openshell.internal:18444/ 2>&1 | tail -n 2 | cut -c1-200)"
+check "the sandbox reaches the host with the private CA" sh -c "timeout 90 openshell sandbox exec private -- /usr/bin/curl -sS -m 30 https://host.openshell.internal:18444/ | grep -qx private"
+check "the sandbox for the private host is deleted" timeout 120 openshell sandbox delete private
+systemctl stop driver-test-https.service >/dev/null 2>&1
+rm -f /etc/pki/trust/anchors/driver-test-ca.pem
+update-ca-certificates >/dev/null 2>&1
+
 section "two sandboxes"
 check "a second sandbox is created" timeout 300 openshell sandbox create --name second --detach -- sleep 600
 check "the second sandbox becomes ready" wait_phase second Ready
@@ -517,6 +580,10 @@ behind_fence_of() {
 		--runtime-dir "/run/openshell-sandbox/$1" -- "${@:3}"
 }
 check "behind a supervisor's fence, its own runtime directory is listed" behind_fence_of "$idb" required /usr/bin/ls "/run/openshell-sandbox/$idb"
+# The host's CA bundle, with which the supervisor verifies the hosts a
+# sandbox reaches; on openSUSE a link into /var/lib/ca-certificates.
+echo "the host's CA bundle: $(readlink -f /etc/ssl/ca-bundle.pem 2>&1)"
+check "behind a supervisor's fence, the host's CA bundle is read" behind_fence_of "$idb" required /usr/bin/head -c 64 /etc/ssl/ca-bundle.pem
 check "without the fence, root reads another sandbox's token" behind_fence_of "$id" off /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
 refuse "behind the fence, root cannot read another sandbox's token" behind_fence_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
 refuse "behind the fence, root cannot read another sandbox's workspace" behind_fence_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"

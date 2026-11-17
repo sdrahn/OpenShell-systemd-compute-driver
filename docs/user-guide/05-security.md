@@ -62,7 +62,7 @@ sandbox's user, as the workload does.
 |---|---|
 | the sandbox's own user, no capabilities, `NoNewPrivileges=yes` | no privilege; another sandbox's files and processes are another user's |
 | mount namespace: empty `/var/lib/openshell` and `/run/openshell-sandbox` but for its own sandbox's files and runtime directory | another sandbox's files and sockets are not there |
-| Landlock fence, entered by `openshell-supervisor-fence` | `/usr` to read and run; `/etc`, `/proc`, `/sys` to read; its own launch files, runtime directory, control socket directory and `/tmp` to write |
+| Landlock fence, entered by `openshell-supervisor-fence` | `/usr` to read and run; `/etc`, `/proc`, `/sys` and the host's CA certificates (`/var/lib/ca-certificates`) to read; its own launch files, runtime directory, control socket directory and `/tmp` to write |
 | SELinux domain `openshell_supervisor_t` with the sandbox's categories | its own sandbox's files and processes |
 | its environment | only variables that begin with `OPENSHELL_` and not with `OPENSHELL_SYSTEMD_`: a launch cannot set `LD_PRELOAD`, `PATH` or a setting of this driver |
 

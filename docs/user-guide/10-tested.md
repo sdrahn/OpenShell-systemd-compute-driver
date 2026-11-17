@@ -32,7 +32,8 @@ lists what no test shows.
 | the named program reaches the allowed host; another host is refused; an unnamed copy is refused; named copies in `/sandbox` and `/tmp` reach it | 4 | a connection the policy allows |
 | two sandboxes have different categories; outside the namespaces one's files are refused with the other's categories | 5 | two sandboxes |
 | one sandbox's user, with no namespace, domain or fence in the way, cannot read another's workspace, token or runtime directory, and cannot signal its supervisor or workload, signal 0 included | 5 | two sandboxes |
-| the supervisor's fence alone refuses root another sandbox's token, workspace and runtime directory | 5 | two sandboxes |
+| the supervisor's fence alone refuses root another sandbox's token, workspace and runtime directory, and lets it read the host's CA bundle | 4, 5 | two sandboxes |
+| a sandbox reaches a host on the host's loopback whose certificate a private CA in the host's trust store signed | 4 | a host with a private CA |
 | with another sandbox's categories a real signal to a supervisor is refused; a workload cannot signal or inspect supervisors or the other workload | 5 | two sandboxes |
 | deleting a sandbox removes its files and units | 3, 6 | two sandboxes; stop, start, delete |
 | a killed workload shows as `Error` | 3, 6 | a workload that dies |
