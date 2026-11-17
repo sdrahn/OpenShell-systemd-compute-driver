@@ -67,6 +67,22 @@ SELinux domains for the sandboxes of openshell-driver-systemd: one for a
 workload, one for its supervisor. A workload reaches its supervisor's
 control socket and no other service's.
 
+%package docs
+Summary:        Guide of openshell-driver-systemd, also for mcp-docs
+Group:          Documentation/Other
+BuildArch:      noarch
+# Installed with mcp-docs, it serves the guide to agents.
+Supplements:    (%{name} and mcp-docs)
+
+%description docs
+The guide of openshell-driver-systemd in Markdown, for administrators
+and for those who work in a sandbox: installing and setting up, what a
+sandbox is and can do, network policy, the security model, operation,
+troubleshooting and reference, and the security review, in
+/usr/share/openshell-driver-systemd/docs. With a collection file for
+mcp-docs, which then serves them as the collection
+openshell-driver-systemd to the agents and assistants on the host.
+
 %package tests
 Summary:        Functional tests of openshell-driver-systemd
 Requires:       %{name} = %{version}
@@ -83,6 +99,7 @@ Requires:       python3
 Requires:       tar
 Requires:       util-linux
 Recommends:     %{name}-selinux = %{version}
+Recommends:     %{name}-docs = %{version}
 BuildArch:      noarch
 
 %description tests
@@ -147,6 +164,12 @@ install -D -m 0644 systemd/tmpfiles.d/%{name}.conf %{buildroot}%{_tmpfilesdir}/%
 install -d %{buildroot}%{_libexecdir}/%{name}/tests
 install -m 0755 test/vm/run-tests.sh test/vm/openshell-setup.sh %{buildroot}%{_libexecdir}/%{name}/tests/
 install -m 0644 test/vm/openshell-version %{buildroot}%{_libexecdir}/%{name}/tests/
+# Not %%doc: a system installed without documentation would leave the
+# guide out, and mcp-docs is to serve it there too.
+install -d %{buildroot}%{_datadir}/%{name}/docs/user-guide
+install -m 0644 docs/user-guide/*.md %{buildroot}%{_datadir}/%{name}/docs/user-guide/
+install -m 0644 docs/security-review-*.md %{buildroot}%{_datadir}/%{name}/docs/
+install -D -m 0644 packaging/mcp-docs/%{name}.yaml %{buildroot}%{_datadir}/mcp-docs/collections.d/%{name}.yaml
 install -d %{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}
 bzip2 -9 -c selinux/%{modulename}.pp >%{buildroot}%{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
 
@@ -196,6 +219,16 @@ fi
 %{_userunitdir}/openshell-driver-systemd.service
 %{_sysusersdir}/%{name}.conf
 %{_tmpfilesdir}/%{name}.conf
+
+%files docs
+%license LICENSE
+%dir %{_datadir}/%{name}
+%{_datadir}/%{name}/docs
+# mcp-docs owns these directories too; whichever package comes first
+# creates them.
+%dir %{_datadir}/mcp-docs
+%dir %{_datadir}/mcp-docs/collections.d
+%{_datadir}/mcp-docs/collections.d/%{name}.yaml
 
 %files tests
 %dir %{_libexecdir}/%{name}

@@ -17,7 +17,9 @@ It requires `openshell-driver-systemd` and what the tests use: `audit`,
 `curl`, `gcc`, `git-core`, `gzip`, `iproute2`, `make`, `policycoreutils`,
 `procps`, `python3`, `tar` and `util-linux`. It recommends
 `openshell-driver-systemd-selinux`; without the policy module the checks of
-the SELinux domains fail.
+the SELinux domains fail. It also recommends
+`openshell-driver-systemd-docs`; without it the checks of the guide are
+`SKIP`.
 
 ## Running them
 
@@ -57,7 +59,7 @@ zypper -n in openshell-driver-systemd-tests openshell-driver-systemd-selinux
 
 | Section | Checks |
 |---|---|
-| the packages | the packages and programs; the workloads' user; the unit templates; the policy module and the programs' labels |
+| the packages | the packages and programs; the workloads' user; the unit templates; the policy module and the programs' labels; the guide and its collection file |
 | the helper | it starts, behind its Landlock fence and in its SELinux domain; the fence alone, by the helper's own test; whom it answers and what it refuses |
 | the driver and the gateway | the driver as the gateway user's service; its socket; the gateway with the driver |
 | a sandbox, the units | a sandbox through the gateway; its three units, their domains, users, namespaces and categories; the supervisor behind its launcher |

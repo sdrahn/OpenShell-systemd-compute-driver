@@ -151,6 +151,21 @@ check "SELinux is enforcing" sh -c '[ "$(getenforce)" = Enforcing ]'
 check "the policy module is loaded" sh -c 'semodule -l | grep -qx openshell_systemd'
 check "openshell-supervisor has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-supervisor | grep -q openshell_supervisor_exec_t'
 check "openshell-sandbox has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-sandbox | grep -q openshell_sandbox_exec_t'
+# The guide, where its package is installed.
+guide=/usr/share/openshell-driver-systemd/docs
+if rpm -q openshell-driver-systemd-docs >/dev/null 2>&1; then
+	check "the guide's index is installed" test -s "$guide/user-guide/README.md"
+	check "every chapter the index names is installed" sh -c "cd $guide/user-guide && for f in \$(grep -o '([0-9][0-9]-[a-z-]*\.md)' README.md | tr -d '()' | sort -u); do test -s \$f || { echo \$f; exit 1; }; done"
+	check "the security review the guide links to is installed" sh -c "ls $guide/security-review-*.md"
+	check "the guide's collection file names the directory of the guide" grep -qx "root: $guide" /usr/share/mcp-docs/collections.d/openshell-driver-systemd.yaml
+	check "the guide names the OpenShell release the tests are written for" sh -c "v=\$(head -n1 $(dirname "$0")/openshell-version) && grep -qF \"**\${v#v}**\" $guide/user-guide/08-reference.md"
+else
+	skip "the guide's index is installed" "openshell-driver-systemd-docs is not installed"
+	skip "every chapter the index names is installed" "openshell-driver-systemd-docs is not installed"
+	skip "the security review the guide links to is installed" "openshell-driver-systemd-docs is not installed"
+	skip "the guide's collection file names the directory of the guide" "openshell-driver-systemd-docs is not installed"
+	skip "the guide names the OpenShell release the tests are written for" "openshell-driver-systemd-docs is not installed"
+fi
 # What an agent works with (the section "what an agent does").
 check "the tools of an agent's work install" zypper -n in --no-recommends git-core gcc make python3 tar gzip util-linux iproute2 procps
 if [ -n "$discovery" ]; then

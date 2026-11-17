@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
+# SPDX-License-Identifier: Apache-2.0
+"""check-docs: check the guide (docs/user-guide) and its mcp-docs
+collection file as mcp-docs reads them: front matter with a title and a
+description, one title per document, no skipped heading level, an
+explicit {#id} on every section, sections small enough to read whole,
+closed code fences, links that lead to a file and a section, and every
+chapter in the index. Part of `make check`.
+
+    tools/check-docs
+"""
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GUIDE = os.path.join(ROOT, "docs", "user-guide")
+COLLECTION = os.path.join(ROOT, "packaging", "mcp-docs", "openshell-driver-systemd.yaml")
+# mcp-docs's advice for a section an agent reads at once.
+MAX_SECTION = 8 << 10
+
+HEADING = re.compile(r"^(#{1,6}) (.*?)(?: \{#([a-z0-9-]+)\})?$")
+LINK = re.compile(r"\]\(([^)#\s]*)(?:#([^)\s]+))?\)")
+FRONT = re.compile(r"^([a-z]+): (.+)$")
+
+errors = []
+
+
+def error(message):
+    errors.append(message)
+
+
+def parse(name, text):
+    """Front matter, body and headings (level, text, id, offset)."""
+    front = {}
+    if not text.startswith("---\n") or "\n---\n" not in text[4:]:
+        error(f"{name}: no front matter")
+        body = text
+    else:
+        end = text.index("\n---\n", 4)
+        for line in text[4:end].split("\n"):
+            match = FRONT.match(line)
+            if not match:
+                error(f"{name}: front matter line {line!r}")
+                continue
+            front[match.group(1)] = match.group(2).strip().strip('"')
+        body = text[end + 5:]
+    headings = []
+    fence = False
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        if stripped.lstrip().startswith("```"):
+            fence = not fence
+        elif not fence:
+            match = HEADING.match(stripped)
+            if match:
+                headings.append((len(match.group(1)), match.group(2), match.group(3), offset))
+        offset += len(line.encode())
+    if fence:
+        error(f"{name}: a code fence is not closed")
+    return front, body, headings
+
+
+def main():
+    names = sorted(n for n in os.listdir(GUIDE) if n.endswith(".md"))
+    if "README.md" not in names:
+        error("docs/user-guide has no README.md")
+    docs = {}
+    for name in names:
+        with open(os.path.join(GUIDE, name), encoding="utf-8") as f:
+            docs[name] = parse(name, f.read())
+
+    ids = {}
+    for name, (front, body, headings) in docs.items():
+        for key in ("title", "description"):
+            if not front.get(key):
+                error(f"{name}: front matter has no {key}")
+        ids[name] = set()
+        titles = [h for h in headings if h[0] == 1]
+        if len(titles) != 1:
+            error(f"{name}: {len(titles)} titles, not one")
+        elif titles[0][1] != front.get("title"):
+            error(f"{name}: title {front.get('title')!r}, heading {titles[0][1]!r}")
+        size = len(body.encode())
+        previous = 0
+        for index, (level, text, anchor, start) in enumerate(headings):
+            if level > previous + 1:
+                error(f"{name}: {text!r} skips a heading level")
+            previous = level
+            if level == 1:
+                continue
+            if not anchor:
+                error(f"{name}: {text!r} has no {{#id}}")
+            elif anchor in ids[name]:
+                error(f"{name}: id {anchor} twice")
+            else:
+                ids[name].add(anchor)
+            end = next((h[3] for h in headings[index + 1:] if h[0] <= level), size)
+            if end - start > MAX_SECTION:
+                error(f"{name}: section {text!r} has {end - start} bytes, more than {MAX_SECTION}")
+        # The title's own section is the whole document for a search
+        # that matches there: keep it short.
+        first = next((h[3] for h in headings if h[0] > 1), size)
+        if titles and first - titles[0][3] > 1200:
+            error(f"{name}: {first - titles[0][3]} bytes before the first section")
+
+    for name, (_, body, _) in docs.items():
+        fence = False
+        for line in body.split("\n"):
+            if line.lstrip().startswith("```"):
+                fence = not fence
+            if fence:
+                continue
+            for target, anchor in LINK.findall(line):
+                if re.match(r"[a-z]+:", target):
+                    continue
+                target = target or name
+                if target in docs:
+                    if anchor and anchor not in ids[target]:
+                        error(f"{name}: no section #{anchor} in {target}")
+                elif not os.path.exists(os.path.join(GUIDE, target)):
+                    error(f"{name}: no file {target}")
+                elif anchor:
+                    error(f"{name}: a link into {target} names a section, which is not checked")
+
+    index = docs.get("README.md", ({}, "", []))[1]
+    for name in names:
+        if name != "README.md" and f"]({name})" not in index:
+            error(f"README.md does not list {name}")
+
+    with open(COLLECTION, encoding="utf-8") as f:
+        collection = f.read()
+    for line in ("name: openshell-driver-systemd", "root: /usr/share/openshell-driver-systemd/docs",
+                 "index: user-guide/README.md"):
+        if line not in collection.split("\n"):
+            error(f"the collection file lacks {line!r}")
+    # The release the driver is built against (tools/openshell-version
+    # keeps the other places in step) is named in the reference.
+    with open(os.path.join(ROOT, "test", "vm", "openshell-version"), encoding="utf-8") as f:
+        release = f.readline().strip().lstrip("v")
+    if f"**{release}**" not in docs.get("08-reference.md", ({}, "", []))[1]:
+        error(f"08-reference.md does not name OpenShell **{release}** (test/vm/openshell-version)")
+    count = re.search(r"\((\d+) chapters", collection)
+    if not count or int(count.group(1)) != len(names) - 1:
+        error(f"the collection file's description does not say {len(names) - 1} chapters")
+
+    for message in errors:
+        print(f"check-docs: {message}", file=sys.stderr)
+    if errors:
+        return 1
+    print(f"check-docs: {len(names)} documents, {sum(len(i) for i in ids.values())} sections")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
