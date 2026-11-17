@@ -175,8 +175,8 @@ fn supervisor_environment(
 ///
 /// `openshell-sandbox` started with a boundary configuration takes its
 /// workload's variables from there alone, not from the supervisor's
-/// `OPENSHELL_USER_ENVIRONMENT`. OpenShell's own names (`OPENSHELL_…`) are
-/// left out: a request does not set the sandbox's controls.
+/// `OPENSHELL_USER_ENVIRONMENT`. Names that begin with `OPENSHELL_` are
+/// left out: they are the sandbox's controls, which a request does not set.
 fn child_environment(sandbox: &DriverSandbox) -> HashMap<String, String> {
     let mut environment = HashMap::from([(
         "PATH".to_string(),
