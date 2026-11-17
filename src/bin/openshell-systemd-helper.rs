@@ -241,12 +241,12 @@ fn userdb_records(uid: u32) -> [(String, std::result::Result<String, String>); 4
 
 /// Writes a sandbox's records into a `userdb` directory. A file that is
 /// there is replaced, by a new file under its name.
-fn write_userdb(dir: &Path, uid: u32, owner_uid: u32, owner_gid: u32) -> std::io::Result<()> {
+fn write_userdb(dir: &Path, uid: u32, owner: u32, group: u32) -> std::io::Result<()> {
     for (file, entry) in userdb_records(uid) {
         let path = dir.join(file);
         remove_tree(&path)?;
         match entry {
-            Ok(content) => create_file(&path, content.as_bytes(), 0o644, owner_uid, owner_gid)?,
+            Ok(content) => create_file(&path, content.as_bytes(), 0o644, owner, group)?,
             Err(target) => std::os::unix::fs::symlink(target, &path)?,
         }
     }
