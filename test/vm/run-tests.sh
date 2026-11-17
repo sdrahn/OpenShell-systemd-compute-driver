@@ -101,6 +101,7 @@ inside() { timeout 90 openshell sandbox exec "$1" -- "${@:2}"; }
 section "the packages"
 check "the packages install" zypper -n --no-gpg-checks in --no-recommends "$here"/rpms/*.rpm
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
+	/usr/libexec/openshell/openshell-supervisor-fence \
 	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do
 	check "$f is installed" test -x "$f"
 done
@@ -231,6 +232,8 @@ check "in the namespace unit's domain, a network setting is read" in_netns_domai
 refuse "in the namespace unit's domain, root cannot read the users' file" in_netns_domain /usr/bin/test -r /etc/passwd
 refuse "in the namespace unit's domain, root cannot write in /etc" in_netns_domain /usr/bin/touch /etc/driver-test-netns
 check "the three units are active" systemctl is-active "openshell-sandbox-netns@$id.service" "openshell-sandbox-supervisor@$id.service" "openshell-sandbox-workload@$id.service"
+check "the supervisor is the stock program, started by its launcher" sh -c "[ \"\$(readlink /proc/$sup/exe)\" = /usr/libexec/openshell/openshell-supervisor ] && systemctl show openshell-sandbox-supervisor@$id.service -p ExecStart --value | grep -q openshell-supervisor-fence"
+check "the supervisor cannot gain privileges" sh -c "grep -qx 'NoNewPrivs:[[:space:]]*1' /proc/$sup/status"
 check "the supervisor runs in its domain" sh -c "tr -d '\\0' </proc/$sup/attr/current | grep -q ':openshell_supervisor_t:'"
 check "the workload runs in its domain" sh -c "tr -d '\\0' </proc/$wl/attr/current | grep -q ':openshell_sandbox_t:'"
 check "the supervisor is not root" sh -c "[ \"\$(stat -c %U /proc/$sup)\" = openshell-sandbox ]"
@@ -393,6 +396,21 @@ check "outside the namespaces, a sandbox's file is read with its categories" rea
 refuse "outside the namespaces, it is refused with another sandbox's categories" reads_as "$level" "$state/$idb/workspace/theirs"
 refuse "and so is the other supervisor's token" reads_as "$level" "$state/$idb/etc/sandbox.jwt"
 rm -f /usr/local/bin/driver-test-cat
+# One supervisor against another sandbox's files. Every supervisor is the
+# same user, so file modes let it read them. Started from here, the
+# launcher is outside the supervisor's SELinux domain and without
+# categories: what it is refused, the fence alone refuses.
+as_supervisor_of() {
+	local of=$1 mode=$2
+	shift 2
+	runuser -u openshell-sandbox -- /usr/libexec/openshell/openshell-supervisor-fence --landlock "$mode" \
+		--runtime-dir "/run/openshell-sandbox/$of" --workspace "$state/$of/workspace" -- "$@"
+}
+check "behind its fence, a supervisor's program reads its own sandbox's workspace" as_supervisor_of "$idb" required /usr/bin/cat "$state/$idb/workspace/theirs"
+check "without the fence, a supervisor's user reads another sandbox's token" as_supervisor_of "$id" off /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
+refuse "behind its fence, it cannot read another sandbox's token" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
+refuse "behind its fence, it cannot read another sandbox's workspace" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"
+refuse "behind its fence, it cannot list the other supervisor's runtime directory" as_supervisor_of "$id" required /usr/bin/ls "/run/openshell-sandbox/$idb"
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
 refuse "a workload cannot signal the other supervisor" inside "$name" sh -c "kill -0 $supb"
 refuse "a workload cannot signal the other workload" inside "$name" sh -c "kill -0 $wlb"

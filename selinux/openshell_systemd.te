@@ -145,6 +145,9 @@ delete_sock_files_pattern(init_t, openshell_sandbox_tmp_t, openshell_sandbox_tmp
 # The supervisor
 
 allow openshell_supervisor_t self:process { fork signal_perms getsched setsched };
+# The unit starts the launcher of the supervisor's Landlock fence, which
+# has the supervisor's label and becomes the supervisor.
+can_exec(openshell_supervisor_t, openshell_supervisor_exec_t)
 allow openshell_supervisor_t self:fifo_file rw_fifo_file_perms;
 allow openshell_supervisor_t self:unix_stream_socket { create_stream_socket_perms connectto };
 allow openshell_supervisor_t self:unix_dgram_socket create_socket_perms;

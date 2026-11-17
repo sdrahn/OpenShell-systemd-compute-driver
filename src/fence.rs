@@ -49,6 +49,17 @@ pub enum Requirement {
     BestEffort,
 }
 
+/// What a program's setting asks for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum Mode {
+    /// The fence, or no start.
+    Required,
+    /// The fence as far as the kernel offers it.
+    BestEffort,
+    /// No fence.
+    Off,
+}
+
 /// What the kernel took on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Outcome {
@@ -75,6 +86,15 @@ fn fitting(path: &Path, access: BitFlags<AccessFs>) -> BitFlags<AccessFs> {
 }
 
 impl Fence {
+    /// Enters the fence as a program's setting asks for it.
+    pub fn enter_as(&self, mode: Mode) -> Result<Outcome, String> {
+        match mode {
+            Mode::Required => self.enter(Requirement::Required),
+            Mode::BestEffort => self.enter(Requirement::BestEffort),
+            Mode::Off => Ok(Outcome::None),
+        }
+    }
+
     /// Puts the calling thread, and what it starts from now on, behind the
     /// fence. Also sets "no new privileges" for it, as Landlock asks of a
     /// program without `CAP_SYS_ADMIN`.

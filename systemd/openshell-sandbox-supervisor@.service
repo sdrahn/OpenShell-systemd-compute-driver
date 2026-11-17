@@ -15,7 +15,10 @@ Type=exec
 User=openshell-sandbox
 Group=openshell-sandbox
 EnvironmentFile=/var/lib/openshell/systemd/%i/supervisor.env
-ExecStart=/usr/libexec/openshell/openshell-supervisor --workdir /sandbox --backend-descriptor-file=/.openshell/supervisor/runtime-descriptor.json --auth-bundle-file=/.openshell/supervisor/auth.json --health-socket-path=/run/openshell-sandbox/%i/supervisor-health.sock
+# The supervisor is every sandbox's the same user. The launcher puts it
+# behind a Landlock fence that names this sandbox's files and no other's,
+# and then becomes the supervisor.
+ExecStart=/usr/libexec/openshell/openshell-supervisor-fence --runtime-dir /run/openshell-sandbox/%i --workspace /var/lib/openshell/systemd/%i/workspace -- /usr/libexec/openshell/openshell-supervisor --workdir /sandbox --backend-descriptor-file=/.openshell/supervisor/runtime-descriptor.json --auth-bundle-file=/.openshell/supervisor/auth.json --health-socket-path=/run/openshell-sandbox/%i/supervisor-health.sock
 BindPaths=/var/lib/openshell/systemd/%i/supervisor:/.openshell/supervisor
 BindReadOnlyPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
 BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control

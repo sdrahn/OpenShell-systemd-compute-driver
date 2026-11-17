@@ -212,8 +212,19 @@ it, so the helper could write a drop-in for any unit; and Landlock does not
 mediate connecting to a Unix socket by its path, nor changes of a file's
 owner, mode or label.
 
+The supervisor is the stock program, and every sandbox's supervisor is the
+same user: file modes would let one read another sandbox's credentials. Its
+unit starts it through `openshell-supervisor-fence`, which enters a fence
+that names this sandbox's files (its launch files, its runtime directory,
+the control socket's directory, its workspace to read) besides `/usr`,
+`/etc`, `/proc` and `/sys`, and then becomes the supervisor. The network is
+not part of this fence: what a sandbox may reach is OpenShell's policy,
+which the supervisor is there to hold. `--landlock`
+(`OPENSHELL_SYSTEMD_SUPERVISOR_LANDLOCK`, in a drop-in of the unit) has the
+same three values as the helper's.
+
 The workload is behind a Landlock fence of OpenShell's own, from the
-sandbox's policy: `openshell-sandbox` sets it. The supervisor has none yet.
+sandbox's policy: `openshell-sandbox` sets it.
 
 ## Not supported
 

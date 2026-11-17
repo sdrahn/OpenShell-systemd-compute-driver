@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 /usr/libexec/openshell/openshell-supervisor	--	gen_context(system_u:object_r:openshell_supervisor_exec_t,s0)
+/usr/libexec/openshell/openshell-supervisor-fence	--	gen_context(system_u:object_r:openshell_supervisor_exec_t,s0)
 /usr/libexec/openshell/openshell-sandbox	--	gen_context(system_u:object_r:openshell_sandbox_exec_t,s0)
 /usr/libexec/openshell/openshell-systemd-helper	--	gen_context(system_u:object_r:openshell_systemd_helper_exec_t,s0)
 

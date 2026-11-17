@@ -109,6 +109,7 @@ cargo test --release --offline
 test "%{_libexecdir}" = /usr/libexec
 install -D -m 0755 target/release/openshell-driver-systemd %{buildroot}%{_bindir}/openshell-driver-systemd
 install -D -m 0755 target/release/openshell-systemd-helper %{buildroot}%{_libexecdir}/openshell/openshell-systemd-helper
+install -D -m 0755 target/release/openshell-supervisor-fence %{buildroot}%{_libexecdir}/openshell/openshell-supervisor-fence
 install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-supervisor %{buildroot}%{_libexecdir}/openshell/openshell-supervisor
 install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-sandbox %{buildroot}%{_libexecdir}/openshell/openshell-sandbox
 install -d %{buildroot}%{_unitdir} %{buildroot}%{_userunitdir}
@@ -156,6 +157,7 @@ fi
 %dir %{_libexecdir}/openshell
 %{_libexecdir}/openshell/openshell-systemd-helper
 %{_libexecdir}/openshell/openshell-supervisor
+%{_libexecdir}/openshell/openshell-supervisor-fence
 %{_libexecdir}/openshell/openshell-sandbox
 %{_unitdir}/openshell-systemd-helper.service
 %{_unitdir}/openshell-sandbox-netns@.service
