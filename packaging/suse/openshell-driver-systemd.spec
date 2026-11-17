@@ -30,6 +30,10 @@ BuildRequires:  cmake
 BuildRequires:  gcc-c++
 BuildRequires:  make
 BuildRequires:  pkgconfig
+# The macros below (%%sysusers_requires, the service macros) add this
+# requirement in the build root. The build service reads the spec
+# without them, so it is named here for it to install.
+BuildRequires:  pkgconfig(systemd)
 # OpenShell's build would otherwise run a protoc binary from a crate.
 BuildRequires:  protobuf-devel
 BuildRequires:  sysuser-tools
