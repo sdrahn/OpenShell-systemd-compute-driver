@@ -123,6 +123,7 @@ if [ -n "$discovery" ]; then
 	semanage permissive -a openshell_sandbox_t
 	semanage permissive -a openshell_supervisor_t
 	semanage permissive -a openshell_systemd_helper_t
+	semanage permissive -a openshell_sandbox_netns_t
 	semodule -DB
 fi
 
@@ -212,6 +213,16 @@ cat "$r" 2>&1 | cut -c1-200
 section "the units"
 sup=$(main_pid "openshell-sandbox-supervisor@$id.service")
 wl=$(main_pid "openshell-sandbox-workload@$id.service")
+check "the namespace's unit names its domain" sh -c "systemctl show openshell-sandbox-netns@$id.service -p SELinuxContext --value | grep -q ':openshell_sandbox_netns_t:'"
+check "the namespace's unit has done its work" sh -c "[ \"\$(systemctl show openshell-sandbox-netns@$id.service -p Result --value)\" = success ]"
+# The unit's process is gone by now. What its domain allows is shown by a
+# program of the system started the same way: root, and that domain.
+in_netns_domain() {
+	systemd-run --quiet --wait --collect -p SELinuxContext=system_u:system_r:openshell_sandbox_netns_t:s0 "$@"
+}
+check "in the namespace unit's domain, a network setting is read" in_netns_domain /usr/bin/test -r /proc/sys/net/ipv4/ip_forward
+refuse "in the namespace unit's domain, root cannot read the users' file" in_netns_domain /usr/bin/test -r /etc/passwd
+refuse "in the namespace unit's domain, root cannot write in /etc" in_netns_domain /usr/bin/touch /etc/driver-test-netns
 check "the three units are active" systemctl is-active "openshell-sandbox-netns@$id.service" "openshell-sandbox-supervisor@$id.service" "openshell-sandbox-workload@$id.service"
 check "the supervisor runs in its domain" sh -c "tr -d '\\0' </proc/$sup/attr/current | grep -q ':openshell_supervisor_t:'"
 check "the workload runs in its domain" sh -c "tr -d '\\0' </proc/$wl/attr/current | grep -q ':openshell_sandbox_t:'"
@@ -273,6 +284,9 @@ import subprocess, sys
 ps = [subprocess.Popen([sys.executable, \"-c\", \"print(%d * 2)\" % n], stdout=subprocess.PIPE) for n in (1, 2, 3)]
 print(sum(int(p.communicate()[0]) for p in ps))" | grep -qx 12'
 work "Python makes a virtual environment" 'python3 -m venv --without-pip venv && venv/bin/python -c "import sys; print(sys.prefix)" | grep -q /sandbox/venv'
+work "a port below 1024 is taken on loopback" 'python3 -c "
+import socket
+s = socket.socket(); s.bind((\"127.0.0.1\", 80)); print(\"bound\")" | grep -qx bound'
 work "a server on loopback is reached" 'python3 -m http.server 8123 --bind 127.0.0.1 >/dev/null 2>&1 & sleep 2; python3 -c "import urllib.request; print(urllib.request.urlopen(\"http://127.0.0.1:8123/file\" if False else \"http://127.0.0.1:8123/\").status)" | grep -qx 200; r=$?; kill %1; exit $r'
 work "a Unix socket in the workspace" 'python3 -c "
 import socket, os
@@ -361,9 +375,10 @@ echo "audit records: $(cat /var/log/audit/audit.log* 2>/dev/null | wc -l); denia
 check "the audit log is being written" sh -c 'cat /var/log/audit/audit.log* | grep -q "type="'
 # Those the tests provoke: the workload's report tries the system D-Bus
 # socket and journald's, systemctl in a sandbox tries D-Bus, and the
-# test's own cat tries another sandbox's files.
+# test's own cat tries another sandbox's files, and the programs started
+# in the namespace unit's domain try /etc.
 check "the D-Bus attempt was denied by the policy" grep -q 'system_bus_socket.*openshell_sandbox_t' "$results/avc.txt"
-grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-cat" .*scontext=[^ ]*:openshell_sandbox_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
+grep -v -E 'comm="(python3|systemctl)" name="(system_bus_socket|socket)".*scontext=[^ ]*:openshell_sandbox_t:|comm="driver-test-cat" .*scontext=[^ ]*:openshell_sandbox_t:|comm="(test|touch)" .*scontext=[^ ]*:openshell_sandbox_netns_t:' "$results/avc.txt" >"$results/avc-unexpected.txt"
 sed -E 's/^.*avc: +denied +//; s/ pid=[0-9]+//; s/ ino=[0-9]+//' "$results/avc-unexpected.txt" | sort | uniq -c | cut -c1-300
 if [ -n "$discovery" ]; then
 	echo "--- every kind of denial once: source target class { permissions } commands, paths"
