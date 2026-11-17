@@ -122,6 +122,7 @@ if [ -n "$discovery" ]; then
 	zypper -n in --no-recommends policycoreutils-python-utils >/dev/null 2>&1
 	semanage permissive -a openshell_sandbox_t
 	semanage permissive -a openshell_supervisor_t
+	semanage permissive -a openshell_systemd_helper_t
 	semodule -DB
 fi
 
@@ -132,6 +133,9 @@ systemctl daemon-reload
 check "the helper starts" systemctl enable --now openshell-systemd-helper.service
 sleep 2
 check "the helper is active" systemctl is-active openshell-systemd-helper.service
+check "the helper runs in its domain" sh -c "tr -d '\\0' </proc/\$(systemctl show openshell-systemd-helper.service -p MainPID --value)/attr/current | grep -q ':openshell_systemd_helper_t:'"
+check "the sandbox units have their label" sh -c 'ls -Z /usr/lib/systemd/system/openshell-sandbox-workload@.service | grep -q openshell_sandbox_unit_file_t'
+check "the mount points exist without the helper having made them" test -d /.openshell/channel -a -d /sandbox -a -f /etc/openshell/auth/sandbox.jwt
 ask='
 import socket, sys
 s = socket.socket(socket.AF_UNIX)

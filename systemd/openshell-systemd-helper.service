@@ -13,6 +13,9 @@ Documentation=https://github.com/sdrahn/OpenShell-systemd-compute-driver
 [Service]
 Type=exec
 ExecStart=/usr/libexec/openshell/openshell-systemd-helper
+# The directory of its socket.
+RuntimeDirectory=openshell-systemd-helper
+RuntimeDirectoryMode=0755
 Restart=on-failure
 RestartSec=5
 

@@ -15,7 +15,12 @@ policy_module(openshell_systemd, 1.0.0)
 # openshell_supervisor_t is a supervisor: it holds the sandbox's
 # credentials and carries its network traffic.
 #
-# The units enter the domains through the labels of the two programs, so
+# openshell_systemd_helper_t is the helper, which runs as root: it keeps
+# the sandboxes' files, labels them, and starts, stops and asks about the
+# sandbox units. It has no network, and reaches no file and no unit but
+# those.
+#
+# The units enter the domains through the labels of the programs, so
 # they start unchanged on a host without this module.
 #
 # All sandboxes share the two domains. What keeps one from another, besides
@@ -23,6 +28,9 @@ policy_module(openshell_systemd, 1.0.0)
 
 gen_require(`
 	type init_t;
+	type systemd_unit_file_t;
+	class system { status reload };
+	class service { start stop status };
 ')
 
 ########################################
@@ -45,6 +53,22 @@ init_nnp_daemon_domain(openshell_supervisor_t)
 # files carry them, so one sandbox is refused what is another's.
 mcs_constrained(openshell_sandbox_t)
 mcs_constrained(openshell_supervisor_t)
+
+# The helper. Its level spans every category: it gives each sandbox's
+# files theirs.
+type openshell_systemd_helper_t;
+type openshell_systemd_helper_exec_t;
+init_ranged_daemon_domain(openshell_systemd_helper_t, openshell_systemd_helper_exec_t, s0 - mcs_systemhigh)
+
+# The directory of the helper's socket.
+type openshell_systemd_helper_runtime_t;
+files_pid_file(openshell_systemd_helper_runtime_t)
+
+# The sandbox units' templates, and the drop-ins the helper writes for a
+# sandbox's units: the only units the helper may start, stop and ask
+# about.
+type openshell_sandbox_unit_file_t;
+systemd_unit_file(openshell_sandbox_unit_file_t)
 
 # The helper's state directory, and what in it is neither domain's.
 type openshell_systemd_var_lib_t;
@@ -248,3 +272,54 @@ manage_files_pattern(openshell_sandbox_t, openshell_sandbox_channel_t, openshell
 stream_connect_pattern(openshell_sandbox_t, openshell_sandbox_channel_t, openshell_sandbox_channel_t, openshell_supervisor_t)
 allow openshell_sandbox_t openshell_supervisor_t:fd use;
 allow openshell_supervisor_t openshell_sandbox_t:fd use;
+
+########################################
+# The helper
+
+allow openshell_systemd_helper_t self:capability { chown dac_override dac_read_search fowner fsetid };
+allow openshell_systemd_helper_t self:process { fork signal_perms getsched };
+allow openshell_systemd_helper_t self:fifo_file rw_fifo_file_perms;
+allow openshell_systemd_helper_t self:unix_stream_socket { create_stream_socket_perms connectto };
+allow openshell_systemd_helper_t self:unix_dgram_socket create_socket_perms;
+
+# Its socket, in the runtime directory systemd makes for its unit.
+manage_dirs_pattern(openshell_systemd_helper_t, openshell_systemd_helper_runtime_t, openshell_systemd_helper_runtime_t)
+manage_sock_files_pattern(openshell_systemd_helper_t, openshell_systemd_helper_runtime_t, openshell_systemd_helper_runtime_t)
+files_search_pids(openshell_systemd_helper_t)
+
+# The sandboxes' files: it writes a launch's, gives them the sandbox's
+# level (chcon; the type is restorecon's, in its own domain), and removes
+# a sandbox's, the workspace with what the workload left in it.
+allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:dir { manage_dir_perms relabelfrom relabelto };
+allow openshell_systemd_helper_t { openshell_systemd_var_lib_t openshell_supervisor_conf_t openshell_sandbox_channel_t openshell_sandbox_workspace_t }:{ file lnk_file fifo_file sock_file } { manage_file_perms relabelfrom relabelto };
+files_search_var_lib(openshell_systemd_helper_t)
+seutil_domtrans_setfiles(openshell_systemd_helper_t)
+selinux_get_fs_mount(openshell_systemd_helper_t)
+selinux_validate_context(openshell_systemd_helper_t)
+seutil_read_config(openshell_systemd_helper_t)
+
+# The sandbox units, through systemd: start, stop, state, and reading
+# the units again after a drop-in changed.
+systemd_exec_systemctl(openshell_systemd_helper_t)
+init_stream_connect(openshell_systemd_helper_t)
+allow openshell_systemd_helper_t init_t:system { status reload };
+allow openshell_systemd_helper_t openshell_sandbox_unit_file_t:service { start stop status };
+
+# The drop-ins that give a sandbox's units its level. A directory the
+# helper makes among systemd's runtime units gets the units' type, and
+# the helper writes only in directories of that type.
+allow openshell_systemd_helper_t systemd_unit_file_t:dir { getattr search write add_name remove_name };
+filetrans_pattern(openshell_systemd_helper_t, systemd_unit_file_t, openshell_sandbox_unit_file_t, dir)
+manage_dirs_pattern(openshell_systemd_helper_t, openshell_sandbox_unit_file_t, openshell_sandbox_unit_file_t)
+manage_files_pattern(openshell_systemd_helper_t, openshell_sandbox_unit_file_t, openshell_sandbox_unit_file_t)
+
+corecmd_exec_bin(openshell_systemd_helper_t)
+auth_read_passwd(openshell_systemd_helper_t)
+files_read_etc_files(openshell_systemd_helper_t)
+kernel_read_system_state(openshell_systemd_helper_t)
+kernel_read_kernel_sysctls(openshell_systemd_helper_t)
+dev_read_urand(openshell_systemd_helper_t)
+dev_read_sysfs(openshell_systemd_helper_t)
+fs_read_cgroup_files(openshell_systemd_helper_t)
+miscfiles_read_localization(openshell_systemd_helper_t)
+logging_send_syslog_msg(openshell_systemd_helper_t)
