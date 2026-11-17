@@ -9,6 +9,19 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.1.1 — 2026-11-17
+
+A fix release: a sandbox's own variables (`--env`, `--env-from`, and a
+template's) reach its workload, which 0.1.0 never gave them. Sandboxes
+made with 0.1.0 get them at their next start.
+
+### Fixed
+
+- A sandbox's own variables (`--env`, `--env-from`, and a template's)
+  reach its workload and the commands run in it. Before, the workload
+  had only a `PATH`: `openshell-sandbox` takes them from the launch's
+  boundary configuration, where the driver did not put them.
+
 ## v0.1.0 — 2026-11-17
 
 The first release: the driver as a project of its own, after OpenShell
