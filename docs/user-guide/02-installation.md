@@ -25,6 +25,11 @@ The gateway's user needs a user manager that runs without a login:
 `loginctl enable-linger <user>`. OpenShell's own installer sets the
 gateway up this way.
 
+The helper gives each sandbox a user ID from 70000 to 79999. If the
+host or its directory service (LDAP, Active Directory) has accounts in
+that range, set another before the first sandbox is made:
+`OPENSHELL_SYSTEMD_UID_RANGE` ([chapter 8](08-reference.md#helper)).
+
 The tools a workload is to use are simply installed on the host
 (`zypper in git-core gcc …`): a sandbox has no file system of its own.
 
@@ -45,7 +50,8 @@ The package brings the two stock programs itself because an OpenShell
 package does not install them on a host: the container drivers take
 them from an image.
 
-Installing creates the user `openshell-sandbox`, the state directory
+Installing creates the user `openshell-sandbox` (the one the unit
+templates name; sandboxes run as users of their own), the state directory
 `/var/lib/openshell/systemd` and the mount points the units bind a
 sandbox's files to ([chapter 8](08-reference.md#files)). Nothing is
 started.
@@ -136,7 +142,7 @@ journalctl -u openshell-systemd-helper.service -n 5         # "Starting systemd 
 openshell gateway info                                      # names openshell-driver-systemd and its version
 openshell sandbox create --name first --detach -- sleep 600
 openshell sandbox get first                                 # Phase: Ready
-openshell sandbox exec first -- id -un                      # openshell-sandbox
+openshell sandbox exec first -- id -un                      # osb-70000
 openshell sandbox delete first
 ```
 
@@ -188,7 +194,8 @@ tested yet: 0.1.0 is the first.
 Removing the package removes the policy module with it. It leaves what
 it did not install as a file: the user `openshell-sandbox`,
 `/var/lib/openshell/systemd`, the mount points (`/.openshell`,
-`/sandbox`, two directories below `/etc/openshell`), and the drop-ins of
+`/sandbox`, two directories below `/etc/openshell`, `/etc/userdb` if it
+was not there before), and the drop-ins of
 steps 1 and 2. Remove them by hand if nothing else uses them.
 
 ## Without the package {#by-hand}

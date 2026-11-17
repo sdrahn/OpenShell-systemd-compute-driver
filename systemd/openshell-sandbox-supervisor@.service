@@ -12,12 +12,14 @@ StopWhenUnneeded=yes
 
 [Service]
 Type=exec
+# The sandbox's own user comes with the helper's drop-in (40-user.conf),
+# as for the workload's unit; this one owns nothing.
 User=openshell-sandbox
 Group=openshell-sandbox
 EnvironmentFile=/var/lib/openshell/systemd/%i/supervisor.env
-# The supervisor is every sandbox's the same user. The launcher puts it
-# behind a Landlock fence that names this sandbox's files and no other's,
-# and then becomes the supervisor.
+# The launcher puts the supervisor behind a Landlock fence that names this
+# sandbox's files and no other's, and then becomes the supervisor: a
+# second wall beside the sandbox's own user.
 ExecStart=/usr/libexec/openshell/openshell-supervisor-fence --runtime-dir /run/openshell-sandbox/%i -- /usr/libexec/openshell/openshell-supervisor --workdir /sandbox --backend-descriptor-file=/.openshell/supervisor/runtime-descriptor.json --auth-bundle-file=/.openshell/supervisor/auth.json --health-socket-path=/run/openshell-sandbox/%i/supervisor-health.sock
 BindPaths=/var/lib/openshell/systemd/%i/supervisor:/.openshell/supervisor
 BindReadOnlyPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
@@ -27,9 +29,8 @@ BindReadOnlyPaths=/var/lib/openshell/systemd/%i/etc/ca.crt:/etc/openshell/tls/cl
 # The supervisor's sockets and its proxy's keys, its own and gone when it
 # stops.
 RuntimeDirectory=openshell-sandbox/%i
-# Every sandbox's supervisor is the same user. This one's unit holds its
-# own sandbox's files and runtime directory and no other's: their sockets
-# are not there to connect to.
+# This unit holds its own sandbox's files and runtime directory and no
+# other's: their sockets are not there to connect to.
 TemporaryFileSystem=/var/lib/openshell:ro
 TemporaryFileSystem=/run/openshell-sandbox:ro
 BindPaths=/run/openshell-sandbox/%i

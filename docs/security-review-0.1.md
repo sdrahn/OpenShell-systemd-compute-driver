@@ -322,3 +322,13 @@ own lock file now differs from it in the two updated crates.
   so a need the tests do not exercise fails without a trace.
 - The openQA test module, and OpenShell from a system's repositories
   (`test/openqa/README.md`).
+
+## Since the review
+
+- **A user for every sandbox (#21).** What S2 left, signals between
+  supervisors, is closed: each sandbox's supervisor and workload run as
+  a host user of that sandbox alone, so the kernel refuses one sandbox's
+  user another's processes, signal 0 included, and another's files,
+  also on a host without the SELinux module. The functional tests try
+  both from outside every namespace, domain and fence. A supervisor and
+  its own workload are still one user.

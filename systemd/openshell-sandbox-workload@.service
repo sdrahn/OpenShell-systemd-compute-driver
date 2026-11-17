@@ -16,31 +16,42 @@ JoinsNamespaceOf=openshell-sandbox-netns@%i.service
 
 [Service]
 Type=exec
+# Every sandbox has a user of its own, which the helper names in a
+# drop-in (40-user.conf) before it starts the unit. This one owns nothing:
+# a unit started without its drop-in fails at its files, and never runs
+# as root.
 User=openshell-sandbox
 Group=openshell-sandbox
 Environment=HOME=/sandbox
 WorkingDirectory=/
 ExecStart=/usr/libexec/openshell/openshell-sandbox --bootstrap /.openshell/channel/sandbox/bootstrap.json
 PrivateNetwork=yes
-# The supervisors and the other sandboxes run as the same user: the
-# workload has a process ID namespace of its own, so that it can neither
-# see nor signal them. Needs systemd 257.
+# The workload has a process ID namespace of its own: it sees neither the
+# host's processes nor another sandbox's, and its supervisor, which is
+# the same user, it can neither see nor signal. Needs systemd 257.
 PrivatePIDs=yes
-# Shared memory and message queues of its own (the namespace unit's):
-# every workload is the same user, and the host's would be a way from one
-# sandbox to another.
+# Shared memory and message queues of its own (the namespace unit's), not
+# the host's.
 PrivateIPC=yes
 BindPaths=/var/lib/openshell/systemd/%i/workspace:/sandbox
 BindPaths=/var/lib/openshell/systemd/%i/channel:/.openshell/channel
 BindPaths=/var/lib/openshell/systemd/%i/control:/.openshell/channel/control
 BindReadOnlyPaths=/var/lib/openshell/systemd/%i/resolv.conf:/etc/resolv.conf
+# The name of the sandbox's user: its record alone, in the directory of
+# such records that is under /etc, which a sandbox's policy lets a
+# workload read. The host's own are in /run/userdb, every sandbox's.
+BindReadOnlyPaths=/var/lib/openshell/systemd/%i/userdb:/etc/userdb
+# journald keeps a journal file for every user and lets the user read it.
+# A sandbox's holds what its supervisor logged, too: the workload gets no
+# journal.
+InaccessiblePaths=-/var/log/journal
 # Nothing of the host's /run: the sockets of its services are there
 # (D-Bus, the journal), which a network namespace does not keep away, and
 # the supervisors' runtime directories.
 TemporaryFileSystem=/run:ro
 TemporaryFileSystem=/run/openshell-supervisor-ca:mode=0777
-# The supervisors run as the same user: none of their files, of this
-# sandbox or another, is in the workload's mount namespace.
+# Its supervisor runs as the same user: none of a supervisor's files, of
+# this sandbox or another, is in the workload's mount namespace.
 TemporaryFileSystem=/var/lib/openshell:ro
 NoNewPrivileges=yes
 CapabilityBoundingSet=

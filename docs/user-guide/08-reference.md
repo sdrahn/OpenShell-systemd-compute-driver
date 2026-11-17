@@ -37,7 +37,7 @@ edit`) as `Environment=NAME=value`.
 | `--allow-user USER` | `OPENSHELL_SYSTEMD_HELPER_ALLOW_USER` | none; required | the only user served: the gateway's |
 | `--landlock MODE` | `OPENSHELL_SYSTEMD_HELPER_LANDLOCK` | `required` | `required`, `best-effort` or `off` ([chapter 5](05-security.md#landlock)) |
 | `--socket PATH` | `OPENSHELL_SYSTEMD_HELPER_SOCKET` | `/run/openshell-systemd-helper/helper.sock` | its socket; change it for the driver too |
-| `--workload-user USER` | `OPENSHELL_SYSTEMD_WORKLOAD_USER` | `openshell-sandbox` | owner of a sandbox's files. The unit templates name the same user: changing one without the other breaks every launch |
+| `--uid-range FIRST-LAST` | `OPENSHELL_SYSTEMD_UID_RANGE` | `70000-79999` | the user IDs sandboxes are given, one each; the group has the same number. From 1000 up, and outside 60001 to 65535. An ID that an account or group of the host has is left out. A sandbox keeps its ID when the range is changed |
 | `--state-dir DIR` | | `/var/lib/openshell/systemd` | where sandboxes' files are kept. The unit templates and the policy module name the default: leave it |
 | `--log-level LEVEL` | `OPENSHELL_LOG_LEVEL` | `info` | as for the driver |
 | `--self-test` | | | enters the fence, tries what it must refuse and allow, prints `ok` or `FAIL` per line; exit status 0 if all are as they must be |
@@ -81,14 +81,17 @@ is enabled; the helper starts and stops them.
 |---|---|
 | `/usr/lib/systemd/system/openshell-*.service` | the system units |
 | `/usr/lib/systemd/user/openshell-driver-systemd.service` | the driver's unit |
-| `/usr/lib/sysusers.d/openshell-driver-systemd.conf` | the user `openshell-sandbox` |
+| `/usr/lib/sysusers.d/openshell-driver-systemd.conf` | the user `openshell-sandbox`, which the unit templates name |
 | `/usr/lib/tmpfiles.d/openshell-driver-systemd.conf` | creates the state directory and the mount points |
 | `/var/lib/openshell/systemd/` (root, 0711) | the state directory; one directory per sandbox ([chapter 6](06-operation.md#files)) |
 | `/.openshell/supervisor`, `/.openshell/channel`, `/sandbox`, `/etc/openshell/auth/sandbox.jwt`, `/etc/openshell/tls/client/ca.crt` | mount points: empty on the host, and inside a sandbox's units the sandbox's files. They are the paths the stock programs use in a container |
+| `/etc/userdb` | systemd's directory for user records under `/etc`; made where it is missing. A workload's unit mounts its sandbox's record over it, so records an administrator keeps there are not seen in a sandbox |
 | `/run/openshell-systemd-helper/helper.sock` (0600, the gateway's user) | the helper's socket |
 | `/run/user/<uid>/openshell/systemd-driver.sock` (0600) | the driver's socket |
 | `/run/openshell-sandbox/<ID>/` (0700) | a supervisor's runtime directory |
-| `/run/systemd/system/openshell-sandbox-{supervisor,workload}@<ID>.service.d/50-selinux.conf` | the helper's drop-ins with a sandbox's SELinux level; only where the module is in use |
+| `/run/systemd/system/openshell-sandbox-{supervisor,workload}@<ID>.service.d/40-user.conf` | the helper's drop-ins with a sandbox's user |
+| `…/50-selinux.conf`, in the same directories | the helper's drop-ins with a sandbox's SELinux level; only where the module is in use |
+| `/run/userdb/osb-<UID>.user`, `osb-<UID>.group`, and the links `<UID>.user`, `<UID>.group` | the records that name a sandbox's user and group for systemd's user database |
 | `/usr/share/selinux/packages/targeted/openshell_systemd.pp.bz2` | the policy module |
 | `/usr/share/openshell-driver-systemd/docs/` | this guide (`openshell-driver-systemd-docs`) |
 | `/usr/share/mcp-docs/collections.d/openshell-driver-systemd.yaml` | the guide's collection file for mcp-docs |
@@ -96,15 +99,15 @@ is enabled; the helper starts and stops them.
 
 The package installs nothing in `/etc` as a file of its own and changes
 nothing there on an update. The two directories and two empty files
-below `/etc/openshell` are made by `systemd-tmpfiles` where they are
-missing.
+below `/etc/openshell`, and `/etc/userdb`, are made by
+`systemd-tmpfiles` where they are missing.
 
-## The user {#user}
+## The users {#user}
 
-`openshell-sandbox`: a system user and group, home `/`, shell
-`/usr/sbin/nologin`. Every supervisor and workload runs as it. It owns
-nothing but sandboxes' files. Do not add it to other groups or give it
-files elsewhere: every workload would get them.
+| User | What |
+|---|---|
+| `osb-<UID>` | one sandbox's user and group, from the helper's range: home `/sandbox`, shell `/usr/sbin/nologin`, in no other group. It exists as a record in `/run/userdb` and as the owner of the sandbox's files, not in `/etc/passwd` |
+| `openshell-sandbox` | a system user and group of the package, home `/`, shell `/usr/sbin/nologin`. The unit templates name it and the helper's drop-in replaces it; it owns nothing. Do not give it files or groups |
 
 ## SELinux types {#selinux}
 
@@ -123,6 +126,7 @@ Module `openshell_systemd`.
 | `openshell_sandbox_channel_t` | a sandbox's `channel/` and `control/` |
 | `openshell_sandbox_workspace_t` | a workspace, and `/sandbox` |
 | `openshell_supervisor_runtime_t` | `/run/openshell-sandbox` |
+| `openshell_sandbox_userdb_t` | the records that name the sandboxes' users, in `/run/userdb` and in a sandbox's `userdb/`; readable by every domain, as the users' file is |
 | `openshell_sandbox_runtime_t` | the workload's own files under `/run` |
 | `openshell_sandbox_tmp_t`, `openshell_supervisor_tmp_t` | their temporary files |
 | `openshell_sandbox_devpts_t` | a workload's pseudo-terminals |

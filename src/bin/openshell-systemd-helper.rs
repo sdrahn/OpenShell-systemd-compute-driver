@@ -38,6 +38,7 @@ const MOUNT_POINT_DIRECTORIES: &[&str] = &[
     "/sandbox",
     "/etc/openshell/auth",
     "/etc/openshell/tls/client",
+    "/etc/userdb",
 ];
 const MOUNT_POINT_FILES: &[&str] = &[
     "/etc/openshell/auth/sandbox.jwt",
@@ -70,14 +71,15 @@ struct Args {
     #[arg(long, env = "OPENSHELL_SYSTEMD_HELPER_ALLOW_USER")]
     allow_user: String,
 
-    /// The user every supervisor and workload runs as. The unit templates
-    /// name the same user.
+    /// The user IDs sandboxes are given, each sandbox one of its own, as
+    /// `FIRST-LAST`. The group has the same number. An ID that an account
+    /// of the host has is left out.
     #[arg(
         long,
-        env = "OPENSHELL_SYSTEMD_WORKLOAD_USER",
-        default_value = "openshell-sandbox"
+        env = "OPENSHELL_SYSTEMD_UID_RANGE",
+        default_value = "70000-79999"
     )]
-    workload_user: String,
+    uid_range: UidRange,
 
     /// Where sandboxes' files are kept. The unit templates name the default.
     #[arg(long, default_value = DEFAULT_STATE_DIR)]
@@ -107,12 +109,167 @@ struct Args {
 /// Where a sandbox's units get their drop-ins.
 const UNIT_DIR: &str = "/run/systemd/system";
 
+/// Where systemd looks for user and group records besides the files of
+/// `/etc`: a sandbox's user gets its name here, for as long as the host
+/// runs. Nothing is written to `/etc/passwd`.
+const USERDB_DIR: &str = "/run/userdb";
+
+/// The user IDs sandboxes are given.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UidRange {
+    first: u32,
+    last: u32,
+}
+
+impl UidRange {
+    /// What a range must leave out: the system's accounts below, and the
+    /// IDs systemd and the kernel keep for themselves (home directories
+    /// of systemd-homed, dynamic users, "nobody") in between.
+    const FIRST_ALLOWED: u32 = 1000;
+    const RESERVED: std::ops::RangeInclusive<u32> = 60001..=65535;
+    const LAST_ALLOWED: u32 = 0x7fff_fffe;
+}
+
+impl std::str::FromStr for UidRange {
+    type Err = String;
+
+    fn from_str(text: &str) -> std::result::Result<Self, String> {
+        let number = |text: &str| {
+            text.trim()
+                .parse::<u32>()
+                .map_err(|_| format!("{text:?} is not a user ID"))
+        };
+        let (first, last) = text
+            .split_once('-')
+            .ok_or_else(|| format!("{text:?} is not a range FIRST-LAST"))?;
+        let (first, last) = (number(first)?, number(last)?);
+        if first > last {
+            return Err(format!("{first} is after {last}"));
+        }
+        if first < Self::FIRST_ALLOWED || last > Self::LAST_ALLOWED {
+            return Err(format!(
+                "user IDs for sandboxes are from {} to {}",
+                Self::FIRST_ALLOWED,
+                Self::LAST_ALLOWED
+            ));
+        }
+        if first <= *Self::RESERVED.end() && last >= *Self::RESERVED.start() {
+            return Err(format!(
+                "the range must leave out {} to {}, which the system keeps for itself",
+                Self::RESERVED.start(),
+                Self::RESERVED.end()
+            ));
+        }
+        Ok(Self { first, last })
+    }
+}
+
+/// Whether an account or a group of the host has this number: such an ID
+/// is never a sandbox's. A lookup that fails counts as taken.
+#[cfg(not(test))]
+fn host_account(id: u32) -> bool {
+    !matches!(
+        nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(id)),
+        Ok(None)
+    ) || !matches!(
+        nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(id)),
+        Ok(None)
+    )
+}
+
+/// The tests' IDs are whatever the test runs as.
+#[cfg(test)]
+fn host_account(_id: u32) -> bool {
+    false
+}
+
+/// A sandbox's group: of the same number as its user.
+#[cfg(not(test))]
+const fn sandbox_gid(uid: u32) -> u32 {
+    uid
+}
+
+/// A test cannot give a file to a group it is not in.
+#[cfg(test)]
+fn sandbox_gid(_uid: u32) -> u32 {
+    nix::unistd::getegid().as_raw()
+}
+
+/// Whether a number read from a sandbox's directory can be its user:
+/// never root or a system account, whatever the file says.
+#[cfg(not(test))]
+const fn sandbox_uid(uid: u32) -> bool {
+    uid >= UidRange::FIRST_ALLOWED
+}
+
+/// A test's sandboxes are the user the test runs as, root in a package
+/// build.
+#[cfg(test)]
+const fn sandbox_uid(_uid: u32) -> bool {
+    true
+}
+
+/// The name a sandbox's user and group have on the host.
+fn sandbox_user_name(uid: u32) -> String {
+    format!("osb-{uid}")
+}
+
+/// The records that give a sandbox's user and group their name, as the
+/// files systemd reads from a `userdb` directory: a record under the
+/// name, and a link to it under the number. Each entry is a file's name
+/// and either its content or the name it links to.
+fn userdb_records(uid: u32) -> [(String, std::result::Result<String, String>); 4] {
+    let name = sandbox_user_name(uid);
+    let gid = sandbox_gid(uid);
+    let user_record = serde_json::json!({
+        "userName": name,
+        "uid": uid,
+        "gid": gid,
+        "realName": "OpenShell sandbox",
+        "homeDirectory": "/sandbox",
+        "shell": "/usr/sbin/nologin",
+    });
+    let group_record = serde_json::json!({ "groupName": name, "gid": gid });
+    let user_file = format!("{name}.user");
+    let group_file = format!("{name}.group");
+    [
+        (user_file.clone(), Ok(user_record.to_string())),
+        (format!("{uid}.user"), Err(user_file)),
+        (group_file.clone(), Ok(group_record.to_string())),
+        (format!("{gid}.group"), Err(group_file)),
+    ]
+}
+
+/// Writes a sandbox's records into a `userdb` directory. A file that is
+/// there is replaced, by a new file under its name.
+fn write_userdb(dir: &Path, uid: u32, owner: u32, group: u32) -> std::io::Result<()> {
+    for (file, entry) in userdb_records(uid) {
+        let path = dir.join(file);
+        remove_tree(&path)?;
+        match entry {
+            Ok(content) => create_file(&path, content.as_bytes(), 0o644, owner, group)?,
+            Err(target) => std::os::unix::fs::symlink(target, &path)?,
+        }
+    }
+    Ok(())
+}
+
+fn remove_userdb(dir: &Path, uid: u32) {
+    for (file, _) in userdb_records(uid) {
+        let _ = remove_tree(&dir.join(file));
+    }
+}
+
 /// What the helper needs once it serves, and what the programs it runs
 /// need (`systemctl`, `restorecon`, `chcon`, `stat`): everything else of
 /// the host is out of its reach, as root too.
 fn fence(state_dir: &Path, socket: &Path) -> Fence {
     let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
-    let mut read_write = vec![state_dir.to_path_buf(), PathBuf::from(UNIT_DIR)];
+    let mut read_write = vec![
+        state_dir.to_path_buf(),
+        PathBuf::from(UNIT_DIR),
+        PathBuf::from(USERDB_DIR),
+    ];
     read_write.extend(socket.parent().map(Path::to_path_buf));
     // /dev/null alone of the devices, and the files through which a label
     // is checked.
@@ -226,8 +383,11 @@ struct Helper {
     /// The owner of what only the helper and systemd read: root.
     owner_uid: u32,
     owner_gid: u32,
-    workload_uid: u32,
-    workload_gid: u32,
+    /// The user IDs sandboxes are given.
+    uid_range: UidRange,
+    /// Where the sandboxes' users get their names: systemd's runtime
+    /// directory for user records.
+    userdb_dir: PathBuf,
 }
 
 fn unit(kind: &str, sandbox_id: &str) -> String {
@@ -391,6 +551,65 @@ impl Helper {
         serde_json::from_slice(&encoded).ok()
     }
 
+    /// A sandbox's user, once one was reserved for it. Kept in a file of
+    /// its own, beside the metadata of a launch: the user is there before
+    /// the first launch, and for the sandbox's life.
+    fn user_of(&self, sandbox_id: &str) -> Option<u32> {
+        read_plain_file(&self.sandbox_dir(sandbox_id).join("uid"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+            .filter(|uid| sandbox_uid(*uid))
+    }
+
+    /// The users of every sandbox.
+    fn users_in_use(&self) -> std::collections::HashSet<u32> {
+        std::fs::read_dir(&self.state_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter_map(|sandbox_id| self.user_of(&sandbox_id))
+            .collect()
+    }
+
+    /// A sandbox's user: the one it has, or the first of the range that
+    /// no sandbox and no account of the host has. The sandbox's directory
+    /// is made for it if it is not there yet; without launch files it is
+    /// not yet a sandbox to any other request.
+    fn reserve(&self, sandbox_id: &str) -> std::result::Result<u32, String> {
+        if let Some(uid) = self.user_of(sandbox_id) {
+            return Ok(uid);
+        }
+        let in_use = self.users_in_use();
+        let uid = (self.uid_range.first..=self.uid_range.last)
+            .find(|uid| !in_use.contains(uid) && !host_account(*uid))
+            .ok_or_else(|| {
+                format!(
+                    "no free user ID from {} to {}",
+                    self.uid_range.first, self.uid_range.last
+                )
+            })?;
+        let dir = self.sandbox_dir(sandbox_id);
+        let describe = |what: &str, error: std::io::Error| format!("{what}: {error}");
+        if !dir.exists() {
+            create_directory(&dir, 0o711, self.owner_uid, self.owner_gid)
+                .map_err(|e| describe("sandbox directory", e))?;
+        }
+        remove_tree(&dir.join("uid.new")).map_err(|e| describe("uid", e))?;
+        create_file(
+            &dir.join("uid.new"),
+            uid.to_string().as_bytes(),
+            0o600,
+            self.owner_uid,
+            self.owner_gid,
+        )
+        .and_then(|()| std::fs::rename(dir.join("uid.new"), dir.join("uid")))
+        .map_err(|e| describe("uid", e))?;
+        Ok(uid)
+    }
+
     /// The categories of every sandbox but one.
     fn categories_in_use(&self, except: &str) -> std::collections::HashSet<Categories> {
         std::fs::read_dir(&self.state_dir)
@@ -460,28 +679,42 @@ impl Helper {
         self.unit_dir.join(format!("{}.d", unit(kind, sandbox_id)))
     }
 
-    /// Writes the drop-ins that start a sandbox's units at its level.
-    /// Returns whether systemd has to read its units again.
+    /// Writes the drop-ins that start a sandbox's units as its user and,
+    /// where the policy module is in use, at its level. Returns whether
+    /// systemd has to read its units again.
     fn write_drop_ins(
         &self,
         sandbox_id: &str,
-        categories: Categories,
+        uid: u32,
+        categories: Option<Categories>,
     ) -> std::result::Result<bool, String> {
         let mut changed = false;
         for (kind, domain) in CONFINED_UNITS {
             let dir = self.drop_in(kind, sandbox_id);
-            let file = dir.join("50-selinux.conf");
-            let content = format!(
-                "[Service]\nSELinuxContext=system_u:system_r:{domain}:{}\n",
-                categories.level()
-            );
-            if std::fs::read_to_string(&file).is_ok_and(|current| current == content) {
-                continue;
+            // The user by number: it needs no entry anywhere to start.
+            let mut files = vec![(
+                "40-user.conf",
+                format!("[Service]\nUser={uid}\nGroup={}\n", sandbox_gid(uid)),
+            )];
+            if let Some(categories) = categories {
+                files.push((
+                    "50-selinux.conf",
+                    format!(
+                        "[Service]\nSELinuxContext=system_u:system_r:{domain}:{}\n",
+                        categories.level()
+                    ),
+                ));
             }
-            std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::write(&file, content))
-                .map_err(|error| format!("write {}: {error}", file.display()))?;
-            changed = true;
+            for (name, content) in files {
+                let file = dir.join(name);
+                if std::fs::read_to_string(&file).is_ok_and(|current| current == content) {
+                    continue;
+                }
+                std::fs::create_dir_all(&dir)
+                    .and_then(|()| std::fs::write(&file, content))
+                    .map_err(|error| format!("write {}: {error}", file.display()))?;
+                changed = true;
+            }
         }
         Ok(changed)
     }
@@ -531,7 +764,10 @@ impl Helper {
             categories,
         })
         .map_err(|error| error.to_string())?;
-        let (uid, gid) = (self.workload_uid, self.workload_gid);
+        let uid = self
+            .user_of(&provision.sandbox_id)
+            .ok_or("no user was reserved for the sandbox")?;
+        let gid = sandbox_gid(uid);
         let dir = self.sandbox_dir(&provision.sandbox_id);
         let sandbox_token = if provision.sandbox_token.is_empty() {
             read_plain_file(&dir.join("etc/sandbox.jwt"))
@@ -552,6 +788,7 @@ impl Helper {
             "etc",
             "supervisor.env",
             "resolv.conf",
+            "userdb",
             "meta.json.new",
         ] {
             remove_tree(&dir.join(name)).map_err(|e| describe(name, e))?;
@@ -619,6 +856,13 @@ impl Helper {
             self.owner_gid,
         )
         .map_err(|e| describe("resolv.conf", e))?;
+        // The name of the sandbox's user, for the workload: its unit
+        // mounts this over /etc/userdb. The host's directory of such
+        // records names every sandbox's.
+        let userdb = dir.join("userdb");
+        create_directory(&userdb, 0o755, self.owner_uid, self.owner_gid)
+            .and_then(|()| write_userdb(&userdb, uid, self.owner_uid, self.owner_gid))
+            .map_err(|e| describe("userdb", e))?;
         let workspace = dir.join("workspace");
         if !workspace.exists() {
             create_directory(&workspace, 0o700, uid, gid).map_err(|e| describe("workspace", e))?;
@@ -730,7 +974,8 @@ impl Helper {
         let sandbox_id = match &request {
             Request::Describe | Request::List => None,
             Request::Provision(provision) => Some(provision.sandbox_id.as_str()),
-            Request::Start { sandbox_id }
+            Request::Reserve { sandbox_id }
+            | Request::Start { sandbox_id }
             | Request::Stop { sandbox_id }
             | Request::Delete { sandbox_id }
             | Request::Status { sandbox_id } => Some(sandbox_id.as_str()),
@@ -743,8 +988,17 @@ impl Helper {
         match request {
             Request::Describe => Response::Described {
                 version: openshell_driver_systemd::VERSION.to_string(),
-                uid: self.workload_uid,
-                gid: self.workload_gid,
+                first_uid: self.uid_range.first,
+                last_uid: self.uid_range.last,
+            },
+            Request::Reserve { sandbox_id } => match self.reserve(&sandbox_id) {
+                Ok(uid) => Response::Reserved {
+                    uid,
+                    gid: sandbox_gid(uid),
+                },
+                Err(message) => Response::Error {
+                    message: format!("reserve a user for sandbox {sandbox_id}: {message}"),
+                },
             },
             Request::Provision(provision) => {
                 Self::stop_units(&provision.sandbox_id).await;
@@ -776,17 +1030,27 @@ impl Helper {
                 let Some(metadata) = self.metadata(&sandbox_id) else {
                     return Response::NotFound;
                 };
-                // The drop-ins are gone after a reboot: every start writes
-                // what is missing.
-                if let Some(categories) = metadata.categories {
-                    let reload = match self.write_drop_ins(&sandbox_id, categories) {
-                        Ok(false) => Ok(String::new()),
-                        Ok(true) => Self::systemctl(&["daemon-reload"]).await,
-                        Err(message) => Err(message),
+                let Some(uid) = self.user_of(&sandbox_id) else {
+                    return Response::Error {
+                        message: format!("sandbox {sandbox_id} has no user"),
                     };
-                    if let Err(message) = reload {
-                        return Response::Error { message };
-                    }
+                };
+                // The user's name and the drop-ins are gone after a reboot:
+                // every start writes what is missing.
+                if let Err(error) =
+                    write_userdb(&self.userdb_dir, uid, self.owner_uid, self.owner_gid)
+                {
+                    return Response::Error {
+                        message: format!("write the user's name for sandbox {sandbox_id}: {error}"),
+                    };
+                }
+                let reload = match self.write_drop_ins(&sandbox_id, uid, metadata.categories) {
+                    Ok(false) => Ok(String::new()),
+                    Ok(true) => Self::systemctl(&["daemon-reload"]).await,
+                    Err(message) => Err(message),
+                };
+                if let Err(message) = reload {
+                    return Response::Error { message };
                 }
                 // The workload's unit requires the namespace's and the
                 // supervisor's.
@@ -814,6 +1078,9 @@ impl Helper {
                 if self.remove_drop_ins(&sandbox_id) {
                     // Only tidying: the units are stopped and their files go.
                     let _ = Self::systemctl(&["daemon-reload"]).await;
+                }
+                if let Some(uid) = self.user_of(&sandbox_id) {
+                    remove_userdb(&self.userdb_dir, uid);
                 }
                 match std::fs::remove_dir_all(&dir) {
                     Ok(()) => Response::Done,
@@ -924,10 +1191,6 @@ fn main() -> Result<()> {
         return Err(miette!("openshell-systemd-helper must run as root"));
     }
     let allowed = user(&args.allow_user)?.uid.as_raw();
-    let workload = user(&args.workload_user)?;
-    if workload.uid.is_root() || workload.gid.as_raw() == 0 {
-        return Err(miette!("the workload user must not be root"));
-    }
     for directory in MOUNT_POINT_DIRECTORIES {
         std::fs::create_dir_all(directory).into_diagnostic()?;
     }
@@ -936,6 +1199,7 @@ fn main() -> Result<()> {
             create_file(Path::new(file), b"", 0o600, 0, 0).into_diagnostic()?;
         }
     }
+    std::fs::create_dir_all(USERDB_DIR).into_diagnostic()?;
     std::fs::create_dir_all(&args.state_dir).into_diagnostic()?;
     std::fs::set_permissions(&args.state_dir, std::fs::Permissions::from_mode(0o711))
         .into_diagnostic()?;
@@ -971,13 +1235,14 @@ fn main() -> Result<()> {
         categories,
         owner_uid: 0,
         owner_gid: 0,
-        workload_uid: workload.uid.as_raw(),
-        workload_gid: workload.gid.as_raw(),
+        uid_range: args.uid_range,
+        userdb_dir: PathBuf::from(USERDB_DIR),
     };
     info!(
         socket = %args.socket.display(),
         allow_user = %args.allow_user,
-        workload_user = %args.workload_user,
+        first_uid = args.uid_range.first,
+        last_uid = args.uid_range.last,
         selinux_categories = categories,
         landlock = ?fenced,
         "Starting systemd helper"
@@ -1039,9 +1304,20 @@ mod tests {
             categories: false,
             owner_uid: nix::unistd::geteuid().as_raw(),
             owner_gid: nix::unistd::getegid().as_raw(),
-            workload_uid: nix::unistd::geteuid().as_raw(),
-            workload_gid: nix::unistd::getegid().as_raw(),
+            uid_range: UidRange {
+                first: 70000,
+                last: 70002,
+            },
+            userdb_dir: state_dir.join("userdb"),
         }
+    }
+
+    /// Makes a sandbox's directory with the test's own user as the
+    /// sandbox's: a test cannot give files to another.
+    fn claim(state_dir: &Path, sandbox_id: &str) {
+        let dir = state_dir.join(sandbox_id);
+        std::fs::create_dir(&dir).expect("sandbox directory");
+        std::fs::write(dir.join("uid"), nix::unistd::geteuid().to_string()).expect("uid");
     }
 
     fn provision(token: &str) -> Provision {
@@ -1089,7 +1365,7 @@ mod tests {
         let state = tempfile::tempdir().expect("state directory");
         // The sandbox's directory is root's in production; here it is the
         // test's.
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         helper
             .write_launch_files(&provision("token-one"))
@@ -1109,6 +1385,7 @@ mod tests {
             ("supervisor.env", 0o600),
             ("resolv.conf", 0o644),
             ("workspace", 0o700),
+            ("userdb", 0o755),
             ("meta.json", 0o600),
         ] {
             assert_eq!(mode(&dir.join(path)), expected, "{path}");
@@ -1131,7 +1408,7 @@ mod tests {
     #[test]
     fn a_second_launch_replaces_the_files_and_keeps_the_workspace() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         helper
             .write_launch_files(&provision("token-one"))
@@ -1156,7 +1433,7 @@ mod tests {
     #[test]
     fn a_launch_without_a_token_keeps_the_one_before() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         let error = helper
             .write_launch_files(&provision(""))
@@ -1182,7 +1459,7 @@ mod tests {
         let mut helper = helper(state.path());
         helper.categories = true;
         for id in [ID, OTHER_ID] {
-            std::fs::create_dir(state.path().join(id)).expect("sandbox directory");
+            claim(state.path(), id);
         }
         let mut other = provision("token-two");
         other.sandbox_id = OTHER_ID.to_string();
@@ -1213,7 +1490,7 @@ mod tests {
     #[test]
     fn without_the_policy_module_a_sandbox_has_no_categories() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         let categories = helper
             .write_launch_files(&provision("token-one"))
@@ -1235,27 +1512,170 @@ mod tests {
     fn drop_ins_start_both_units_at_the_sandbox_level() {
         let state = tempfile::tempdir().expect("state directory");
         let helper = helper(state.path());
-        let categories = Categories(7, 512);
+        let categories = Some(Categories(7, 512));
 
-        assert!(helper.write_drop_ins(ID, categories).expect("written"));
-        assert!(!helper.write_drop_ins(ID, categories).expect("unchanged"));
+        assert!(
+            helper
+                .write_drop_ins(ID, 70001, categories)
+                .expect("written")
+        );
+        assert!(
+            !helper
+                .write_drop_ins(ID, 70001, categories)
+                .expect("unchanged")
+        );
         for (kind, domain) in CONFINED_UNITS {
-            let file = helper.unit_dir.join(format!(
-                "openshell-sandbox-{kind}@{ID}.service.d/50-selinux.conf"
-            ));
+            let dir = helper
+                .unit_dir
+                .join(format!("openshell-sandbox-{kind}@{ID}.service.d"));
             assert_eq!(
-                std::fs::read_to_string(file).expect("drop-in"),
+                std::fs::read_to_string(dir.join("50-selinux.conf")).expect("drop-in"),
                 format!("[Service]\nSELinuxContext=system_u:system_r:{domain}:s0:c7,c512\n")
             );
+            let user = std::fs::read_to_string(dir.join("40-user.conf")).expect("drop-in");
+            assert!(user.starts_with("[Service]\nUser=70001\nGroup="), "{user}");
         }
         assert!(helper.remove_drop_ins(ID));
         assert!(!helper.remove_drop_ins(ID));
     }
 
     #[test]
-    fn an_environment_that_does_not_fit_a_line_writes_nothing() {
+    fn without_the_policy_module_the_drop_ins_still_name_the_user() {
+        let state = tempfile::tempdir().expect("state directory");
+        let helper = helper(state.path());
+        assert!(helper.write_drop_ins(ID, 70001, None).expect("written"));
+        for (kind, _) in CONFINED_UNITS {
+            let dir = helper
+                .unit_dir
+                .join(format!("openshell-sandbox-{kind}@{ID}.service.d"));
+            assert!(dir.join("40-user.conf").exists());
+            assert!(!dir.join("50-selinux.conf").exists());
+        }
+    }
+
+    const THIRD_ID: &str = "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
+    const FOURTH_ID: &str = "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d";
+
+    #[test]
+    fn every_sandbox_gets_a_user_of_its_own_and_keeps_it() {
+        let state = tempfile::tempdir().expect("state directory");
+        let helper = helper(state.path());
+        let first = helper.reserve(ID).expect("first");
+        let second = helper.reserve(OTHER_ID).expect("second");
+        assert_eq!((first, second), (70000, 70001));
+        assert_eq!(helper.reserve(ID).expect("again"), first);
+        assert_eq!(helper.user_of(ID), Some(first));
+        assert_eq!(mode(&state.path().join(ID).join("uid")), 0o600);
+
+        // The range is used up with the third; a user comes back with
+        // its sandbox's directory.
+        assert_eq!(helper.reserve(THIRD_ID).expect("third"), 70002);
+        let error = helper.reserve(FOURTH_ID).expect_err("none left");
+        assert!(error.contains("no free user ID"), "{error}");
+        assert!(!state.path().join(FOURTH_ID).exists());
+        std::fs::remove_dir_all(state.path().join(OTHER_ID)).expect("delete");
+        assert_eq!(helper.reserve(FOURTH_ID).expect("fourth"), second);
+    }
+
+    #[tokio::test]
+    async fn a_reserved_user_alone_is_not_yet_a_sandbox() {
+        let state = tempfile::tempdir().expect("state directory");
+        let helper = helper(state.path());
+        let reserved = helper
+            .handle(Request::Reserve {
+                sandbox_id: ID.to_string(),
+            })
+            .await;
+        assert!(
+            matches!(reserved, Response::Reserved { uid: 70000, .. }),
+            "{reserved:?}"
+        );
+        assert_eq!(
+            helper
+                .handle(Request::Status {
+                    sandbox_id: ID.to_string()
+                })
+                .await,
+            Response::NotFound
+        );
+        assert_eq!(
+            helper.handle(Request::List).await,
+            Response::Listed {
+                sandboxes: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn launch_files_are_not_written_for_a_sandbox_without_a_user() {
         let state = tempfile::tempdir().expect("state directory");
         std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        let error = helper(state.path())
+            .write_launch_files(&provision("token"))
+            .expect_err("refused");
+        assert!(error.contains("no user was reserved"), "{error}");
+        // Nor for one whose file does not hold a number.
+        std::fs::write(state.path().join(ID).join("uid"), "root").expect("uid");
+        assert_eq!(helper(state.path()).user_of(ID), None);
+    }
+
+    #[test]
+    fn a_range_leaves_out_what_the_system_keeps() {
+        assert_eq!(
+            "70000-79999".parse::<UidRange>(),
+            Ok(UidRange {
+                first: 70000,
+                last: 79999
+            })
+        );
+        assert!("2000-2999".parse::<UidRange>().is_ok());
+        for range in [
+            "",
+            "70000",
+            "79999-70000",
+            "0-10",
+            "999-2000",
+            "60000-70000",
+            "61184-65519",
+            "65534-65534",
+            "70000-4294967295",
+            "a-b",
+        ] {
+            assert!(range.parse::<UidRange>().is_err(), "{range:?}");
+        }
+    }
+
+    #[test]
+    fn a_user_has_its_name_by_name_and_by_number() {
+        let state = tempfile::tempdir().expect("state directory");
+        let dir = state.path();
+        let (owner, group) = (
+            nix::unistd::geteuid().as_raw(),
+            nix::unistd::getegid().as_raw(),
+        );
+        write_userdb(dir, 70001, owner, group).expect("written");
+        write_userdb(dir, 70001, owner, group).expect("written again");
+        let user: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("70001.user")).expect("by number"),
+        )
+        .expect("a record");
+        assert_eq!(user["userName"], "osb-70001");
+        assert_eq!(user["uid"], 70001);
+        assert_eq!(user["homeDirectory"], "/sandbox");
+        assert_eq!(
+            std::fs::read_link(dir.join("70001.user")).expect("a link"),
+            Path::new("osb-70001.user")
+        );
+        assert_eq!(mode(&dir.join("osb-70001.user")), 0o644);
+        assert!(dir.join("osb-70001.group").exists());
+        remove_userdb(dir, 70001);
+        assert_eq!(std::fs::read_dir(dir).expect("directory").count(), 0);
+    }
+
+    #[test]
+    fn an_environment_that_does_not_fit_a_line_writes_nothing() {
+        let state = tempfile::tempdir().expect("state directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         let mut bad = provision("token");
         bad.environment.insert(
@@ -1270,7 +1690,7 @@ mod tests {
     #[test]
     fn a_supervisor_is_given_only_openshells_own_variables() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let helper = helper(state.path());
         for name in [
             "LD_PRELOAD",
@@ -1289,7 +1709,7 @@ mod tests {
     #[test]
     fn categories_outlive_a_helper_that_finds_no_policy_module() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let mut helper = helper(state.path());
         helper.categories = true;
         let first = helper
@@ -1306,7 +1726,7 @@ mod tests {
     #[test]
     fn a_launch_that_fails_leaves_the_metadata_of_the_one_before() {
         let state = tempfile::tempdir().expect("state directory");
-        std::fs::create_dir(state.path().join(ID)).expect("sandbox directory");
+        claim(state.path(), ID);
         let mut helper = helper(state.path());
         helper.categories = true;
         let first = helper
@@ -1341,6 +1761,9 @@ mod tests {
             "D6AC9D5F-60AA-4FCB-B050-9A0A4B134205",
         ] {
             for request in [
+                Request::Reserve {
+                    sandbox_id: sandbox_id.to_string(),
+                },
                 Request::Start {
                     sandbox_id: sandbox_id.to_string(),
                 },

@@ -59,7 +59,7 @@ zypper -n in openshell-driver-systemd-tests openshell-driver-systemd-selinux
 
 | Section | Checks |
 |---|---|
-| the packages | the packages and programs; the workloads' user; the unit templates; the policy module and the programs' labels; the guide and its collection file |
+| the packages | the packages and programs; the user the unit templates name; the unit templates; the policy module and the programs' labels; the guide and its collection file |
 | the helper | it starts, behind its Landlock fence and in its SELinux domain; the fence alone, by the helper's own test; whom it answers and what it refuses |
 | the driver and the gateway | the driver as the gateway user's service; its socket; the gateway with the driver |
 | a sandbox, the units | a sandbox through the gateway; its three units, their domains, users, namespaces and categories; the supervisor behind its launcher |
@@ -68,7 +68,7 @@ zypper -n in openshell-driver-systemd-tests openshell-driver-systemd-selinux
 | what an agent does | git, a C compiler, make, Python, a server on loopback, archives, a script in `/tmp`, reading the host |
 | restarts under a running sandbox | the driver and the gateway restart; the sandbox goes on or comes back |
 | a connection the policy allows | the named program reaches the host and no other; an unnamed copy is refused; named copies in the workspace and `/tmp` reach it |
-| two sandboxes | different categories; one sandbox's files against the other's categories and against the other's supervisor behind its fence; signals and processes |
+| two sandboxes | different users and categories; one sandbox's user against the other's files and processes; one sandbox's files against the other's categories; the supervisor's fence alone; signals and processes |
 | a workload that dies; stop, start, delete | the gateway learns of it; the workspace is kept; nothing is left |
 | SELinux denials | only those the tests provoke |
 

@@ -58,6 +58,8 @@ fn fence(runtime_dir: &Path) -> Fence {
         // Where /etc/resolv.conf points on the hosts this is for.
         "/run/netconfig",
         "/run/systemd/resolve",
+        // The names of the sandboxes' users.
+        "/run/userdb",
     ]);
     let mut read_write = paths(&[
         "/.openshell/supervisor",

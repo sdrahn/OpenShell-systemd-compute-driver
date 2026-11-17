@@ -1,2 +1,3 @@
-# The user every sandbox's supervisor and workload run as.
+# The user the sandbox units name. It owns nothing: every sandbox runs as
+# a user of its own, which the helper names in a drop-in.
 u openshell-sandbox - "OpenShell sandboxes" / /usr/sbin/nologin

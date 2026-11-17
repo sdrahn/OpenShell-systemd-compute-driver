@@ -17,8 +17,8 @@ the helper's journal, and the journal of the sandbox's units
 | Message | Cause and fix |
 |---|---|
 | `the following required arguments were not provided: --allow-user` | no user was named: [chapter 2, step 1](02-installation.md#helper) |
-| `no user NAME` | the user of `OPENSHELL_SYSTEMD_HELPER_ALLOW_USER`, or `openshell-sandbox`, does not exist. The package creates the latter: `systemd-sysusers` |
-| `the workload user must not be root` | `OPENSHELL_SYSTEMD_WORKLOAD_USER` names root or a user of group 0 |
+| `no user NAME` | the user of `OPENSHELL_SYSTEMD_HELPER_ALLOW_USER` does not exist |
+| `invalid value … for '--uid-range <UID_RANGE>'` | `OPENSHELL_SYSTEMD_UID_RANGE` is not `FIRST-LAST`, starts below 1000, or touches 60001 to 65535, which the system keeps for itself |
 | `openshell-systemd-helper must run as root` | it was started by hand as another user |
 | `Landlock: file access: …` | the kernel has no Landlock, or one before Linux 6.2. Check `cat /sys/kernel/security/lsm`; add `lsm=landlock,…` to the kernel's command line if it is built in but off. As a last resort `OPENSHELL_SYSTEMD_HELPER_LANDLOCK=best-effort` ([chapter 5](05-security.md#landlock)) |
 | `/usr/bin/stat: …` | SELinux is on and the label of `openshell-sandbox` could not be read. The helper then refuses to start, since it could not tell whether sandboxes need categories |
@@ -65,7 +65,8 @@ The message comes back from `openshell sandbox create`:
 | Message | Meaning |
 |---|---|
 | `… takes no image (got "…")` | [chapter 3](03-sandboxes.md#no-image) |
-| `… runs every workload as UID:GID and cannot run one as …` | the policy or template asks for another user or group |
+| `… gives every sandbox a user of its own and cannot run one as …` | the policy or template asks for a particular user or group |
+| `reserve a user for sandbox ID: no free user ID from FIRST to LAST` | every ID of the helper's range is a sandbox's or an account's. Delete sandboxes, or widen `OPENSHELL_SYSTEMD_UID_RANGE` |
 | `the sandbox ID is not a canonical UUID` | the gateway sent an ID this driver does not accept; not expected from a stock gateway |
 | `read the gateway CA PATH: …` | the file of `OPENSHELL_SYSTEMD_TLS_CA` is missing or unreadable for the gateway's user |
 | `provision sandbox ID: environment variable "NAME" is not one a supervisor may be given` | a launch carried a variable that does not begin with `OPENSHELL_`, or one of this driver's; not expected from a stock gateway |
@@ -94,7 +95,7 @@ create command returns an error that ends in the output of
 | supervisor: status `203/EXEC` or `Permission denied` on a program | wrong SELinux label after a manual installation: `restorecon -R /usr/libexec/openshell` |
 | supervisor runs, logs that it cannot reach the gateway, or a certificate error | `OPENSHELL_SYSTEMD_TLS_CA` names the wrong CA or none; `OPENSHELL_GATEWAY_PORT` or `OPENSHELL_GRPC_ENDPOINT` do not match the gateway. The supervisor is on the host's network and dials `127.0.0.1` by default |
 | any: `Failed to set up mount namespacing: /.openshell/…: No such file or directory` | a mount point is missing: `systemd-tmpfiles --create /usr/lib/tmpfiles.d/openshell-driver-systemd.conf` |
-| any: `Failed at step USER` | the user `openshell-sandbox` is missing: `systemd-sysusers` |
+| any: `Failed at step USER` or `Permission denied` on the sandbox's own files | the unit was started without the helper's drop-in `40-user.conf`, by hand: start sandboxes through the gateway. Or the user `openshell-sandbox`, which the templates name, is missing: `systemd-sysusers` |
 
    The systemd messages are the usual ones for these causes; not each
    was provoked in a test.
@@ -116,7 +117,8 @@ journals. The memory limit of a drop-in shows as `oom-kill` in
 | Symptom | Cause |
 |---|---|
 | `Read-only file system` | writing outside `/sandbox` and `/tmp` ([chapter 3](03-sandboxes.md#files)) |
-| `Permission denied` on a path the policy lists | file modes for `openshell-sandbox`, or a security file under SELinux; the policy cannot widen either |
+| `Permission denied` on a path the policy lists | file modes for the sandbox's user, or a security file under SELinux; the policy cannot widen either |
+| `id -un` or `whoami` cannot find a name for the user | the host's `nsswitch.conf` has no `systemd` for `passwd`. The sandbox works; its user has only a number |
 | `Permission denied` on a path the policy does not list | OpenShell's Landlock rules for the workload; nothing is logged |
 | a connection is refused or times out | the policy does not name the host, the port, or the **program** ([chapter 4](04-network-policy.md#binaries)) |
 | a name does not resolve | the sandbox's name service answers by the policy |
@@ -171,6 +173,7 @@ From the helper, inside the driver's error:
 | `the request did not arrive in time` | a client connected and sent nothing for 30 seconds |
 | `unreadable request: …`, `read the request: …` | not a request of this protocol, or larger than 4 MiB |
 | `provision sandbox ID: …` | writing the launch files failed; the rest names the file or the program |
+| `reserve a user for sandbox ID: …`, `write the user's name for sandbox ID: …`, `sandbox ID has no user` | the sandbox's user could not be chosen, named in `/run/userdb`, or read from its `uid` file |
 | `systemctl start …: …` followed by the units' status | a unit did not start ([above](#not-ready)) |
 | `remove sandbox ID: …`, `list sandboxes: …` | the state directory could not be read or changed |
 

@@ -36,18 +36,19 @@ image in a sandbox template). A tool the workload needs is installed on
 the host by its administrator; a tool only this sandbox needs can be
 put into its workspace.
 
-For the same reason a policy that asks for a workload user or group
-other than the sandboxes' own (`sandbox`, or its number) is refused:
+A policy that asks for a particular workload user or group is refused
+too. The helper chooses each sandbox's user; a policy may say `sandbox`
+or nothing:
 
 ```text
-the systemd compute driver runs every workload as UID:GID and cannot run one as "USER":"GROUP"
+the systemd compute driver gives every sandbox a user of its own and cannot run one as "USER":"GROUP"
 ```
 
 ## What a workload is {#identity}
 
 | Property | Value |
 |---|---|
-| user and group | `openshell-sandbox`, never root; the same for every sandbox |
+| user and group | `osb-<UID>`, the sandbox's own: never root, never another sandbox's, and the same after stop and start |
 | capabilities | none; it cannot gain any (`NoNewPrivileges`) |
 | home and working directory of a command | `/sandbox` (`HOME=/sandbox`) |
 | processes it sees | its own sandbox's only |
@@ -61,8 +62,9 @@ work in it.
 
 Three things decide together, and the tightest wins:
 
-1. **The host's file modes** for the user `openshell-sandbox`: it reads
-   what any unprivileged user of the host reads.
+1. **The host's file modes** for the sandbox's user, which is in no
+   group but its own: it reads what any unprivileged user of the host
+   reads.
 2. **OpenShell's file system policy** of the sandbox, which
    `openshell-sandbox` sets as a Landlock rule set. OpenShell's default
    is read-only for `/bin`, `/usr`, `/lib`, `/proc`, `/dev/urandom`,
@@ -81,6 +83,8 @@ Three things decide together, and the tightest wins:
 | `/tmp` | the sandbox's own, read-write; programs written there can be run. Emptied when the sandbox stops |
 | `/usr`, `/etc`, `/proc`, … | the host's, read-only |
 | `/etc/resolv.conf` | the sandbox's own: its name service is its supervisor's |
+| `/etc/userdb` | the sandbox's own: the record that gives its user a name |
+| `/var/log/journal` | not there: the journal is the host's administrators' |
 | `/run` | empty but for what the sandbox's own programs put there |
 
 A policy cannot give more than the unit: a `read_write` entry for
@@ -90,7 +94,7 @@ A policy cannot give more than the unit: a `read_write` entry for
 
 `/sandbox` in the sandbox is
 `/var/lib/openshell/systemd/<sandbox ID>/workspace` on the host: a
-directory of the user `openshell-sandbox`, mode 0700.
+directory of the sandbox's user, mode 0700.
 
 - It is kept across stop and start, and across restarts of the driver,
   the helper and the gateway.
@@ -159,7 +163,7 @@ driver alone leaves a running sandbox untouched.
 |---|---|---|
 | root file system | an image | the host's, read-only |
 | tools | what the image holds | what the host has installed |
-| user in the sandbox | the image's sandbox account | `openshell-sandbox` of the host, shared by all sandboxes |
+| user in the sandbox | the image's sandbox account | a user of the host, `osb-<UID>`, of this sandbox alone |
 | writable | the container's file system | `/sandbox` and `/tmp` |
 | CPU and memory limits of a sandbox | the runtime's | none per sandbox ([chapter 6](06-operation.md#limits)) |
 | what a workload learns about the host | little | what an unprivileged user can read |

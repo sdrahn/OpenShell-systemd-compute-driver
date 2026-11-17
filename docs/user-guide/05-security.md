@@ -6,8 +6,8 @@ tags: [security, selinux, landlock, administrator]
 
 # 5. The security model
 
-A sandbox of this driver is a set of processes of one unprivileged host
-user, fenced in by namespaces, systemd settings, Landlock, seccomp and
+A sandbox of this driver is a set of processes of an unprivileged host
+user of its own, fenced in by namespaces, systemd settings, Landlock, seccomp and
 SELinux. This chapter says what each layer holds and where the limits
 are. The full review before the first release, with its findings, is
 [security-review-0.1.md](../security-review-0.1.md).
@@ -27,8 +27,8 @@ the gateway controls every sandbox's policy.
 
 ## Compared with a container or a VM {#compared}
 
-A sandbox here shares the host's kernel, the host's file system
-(read-only) and one user with every other sandbox. That is less
+A sandbox here shares the host's kernel and the host's file system
+(read-only) with every other sandbox. That is less
 separation than a VM gives and, in what a workload can **read**, less
 than a container gives. Choose the driver when reading the host is
 wanted, and not for workloads that must learn nothing about it.
@@ -55,12 +55,12 @@ domain may not read.
 ## The layers around a supervisor {#supervisor}
 
 The supervisor is on the host's network and holds its sandbox's
-credentials. It is trusted more than a workload, but every sandbox's
-supervisor is the same user.
+credentials. It is trusted more than a workload. It runs as its
+sandbox's user, as the workload does.
 
 | Layer | Holds |
 |---|---|
-| user `openshell-sandbox`, no capabilities, `NoNewPrivileges=yes` | no privilege |
+| the sandbox's own user, no capabilities, `NoNewPrivileges=yes` | no privilege; another sandbox's files and processes are another user's |
 | mount namespace: empty `/var/lib/openshell` and `/run/openshell-sandbox` but for its own sandbox's files and runtime directory | another sandbox's files and sockets are not there |
 | Landlock fence, entered by `openshell-supervisor-fence` | `/usr` to read and run; `/etc`, `/proc`, `/sys` to read; its own launch files, runtime directory, control socket directory and `/tmp` to write |
 | SELinux domain `openshell_supervisor_t` with the sandbox's categories | its own sandbox's files and processes |
@@ -89,16 +89,47 @@ not. Its socket serves that user only; it has no TCP listener.
 
 ## What keeps sandboxes apart {#between-sandboxes}
 
-Every workload and supervisor is the user `openshell-sandbox`, so file
-modes alone separate nothing.
+Every sandbox is a host user of its own (`osb-<UID>`, in no group but
+its own), and its files are that user's with modes 0700 and 0600. So
+the kernel's ordinary checks already refuse one sandbox another's files
+and signals. The other layers stand beside that:
 
 | Between | With the SELinux module | Without it |
 |---|---|---|
-| workload and another sandbox's files | not in its mount namespace; refused by categories even outside the namespace | not in its mount namespace |
-| workload and another sandbox's or the host's processes | process ID namespace; domain | process ID namespace |
+| workload and another sandbox's files | another user's; not in its mount namespace; refused by categories | another user's; not in its mount namespace |
+| workload and another sandbox's or the host's processes | another user's; process ID namespace; domain | another user's; process ID namespace |
 | workload and its own supervisor's credentials | not mounted; security file | not mounted |
-| supervisor and another sandbox's files | not mounted; Landlock fence; categories | not mounted; Landlock fence |
-| supervisor and another supervisor's processes | a real signal is refused by categories; signal 0 is not | **nothing**: one supervisor can signal another |
+| supervisor and another sandbox's files | another user's; not mounted; Landlock fence; categories | another user's; not mounted; Landlock fence |
+| supervisor and another supervisor's processes | another user's: no signal, signal 0 included; categories | another user's: no signal |
+
+Within one sandbox, the supervisor and the workload are the same user.
+What keeps the supervisor's credentials from the workload is the third
+row.
+
+### How a sandbox gets its user {#users}
+
+The helper reserves the user before the first launch: the lowest ID of
+its range (`OPENSHELL_SYSTEMD_UID_RANGE`, 70000 to 79999 by default)
+that no sandbox has and that no account or group of the host has. The
+group has the same number. The number is kept in the sandbox's
+directory and returns to the range when the sandbox is deleted, with
+all its files.
+
+- The units are started with the number (`User=70000` in the drop-in
+  `40-user.conf`), so nothing has to be looked up for a sandbox to
+  start.
+- The name comes from a record in `/run/userdb`, which systemd's user
+  database reads on hosts whose `nsswitch.conf` has `systemd` for
+  `passwd` and `group`, as SLES 16 and Leap 16 do. Nothing is written
+  to `/etc/passwd`. The workload sees its own record alone, at
+  `/etc/userdb`.
+- journald keeps a journal file for every such user
+  (`journalctl _UID=70000`) and would let the user read it. The
+  workload's unit hides the journals' directory.
+- A request cannot choose the user, and the unit templates name
+  `openshell-sandbox`, which owns nothing: a unit that were started
+  without the helper's drop-in fails at its files and does not run as
+  root.
 
 ## The SELinux module {#selinux}
 
@@ -168,9 +199,8 @@ The units start and work on a host without the module. Then:
 
 - nothing refuses a workload the sockets of host services but the fact
   that the unit's `/run` does not hold them;
-- two sandboxes are kept apart by namespaces and the supervisors' fences
-  only, with no second layer if a workload leaves its namespaces;
-- one supervisor can signal, and so stop, another;
+- two sandboxes are kept apart by their users, their namespaces and the
+  supervisors' fences, without the categories as a further layer;
 - the helper is bounded by its fence and capabilities only.
 
 No functional test runs on such a host. Run the driver with SELinux
@@ -178,11 +208,12 @@ enforcing, as SLES 16 and Leap 16 are installed.
 
 ## Known limits {#limits}
 
-- **One user for all sandboxes.** The root of most rows above. A user
-  for every sandbox is planned (issue #21 of the project).
-- **Signal 0 between supervisors**, also with SELinux: one supervisor
-  can learn whether a process of another exists. The distribution's
-  policy does not hold that signal to categories.
+- **One user for a sandbox's supervisor and its workload.** Between
+  the two there are the workload's namespaces and SELinux, not file
+  modes.
+- **User IDs come back.** A deleted sandbox's ID is given to a later
+  one. Nothing of the old sandbox is left to own: its directory is
+  removed and its units' temporary files went with them.
 - **A helper that was taken over** can write a drop-in for any unit of
   the host: its fence and its domain grant the drop-in directory, not
   names in it. No field of a request reaches a drop-in's path or

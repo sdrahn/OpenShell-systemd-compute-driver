@@ -43,9 +43,9 @@ built and tested against one OpenShell release, named in
 | `openshell-driver-systemd`, the driver | the gateway's user, as a service of that user | answers the gateway on a Unix socket; prepares a sandbox's launch files; has no privilege |
 | `openshell-systemd-helper`, the helper | root, as a system service | writes a sandbox's files and starts, stops and reads the state of its units; serves one user |
 | three units per sandbox | see below | the sandbox itself |
-| `openshell-supervisor` | `openshell-sandbox` | OpenShell's stock supervisor: holds the sandbox's credentials, talks to the gateway, mediates the workload's network |
-| `openshell-sandbox` | `openshell-sandbox` | OpenShell's stock workload launcher: applies OpenShell's Landlock and seccomp policy and starts the agent |
-| `openshell-supervisor-fence` | `openshell-sandbox` | a launcher of this driver: puts a Landlock fence around the supervisor, then becomes it |
+| `openshell-supervisor` | the sandbox's user | OpenShell's stock supervisor: holds the sandbox's credentials, talks to the gateway, mediates the workload's network |
+| `openshell-sandbox` | the sandbox's user | OpenShell's stock workload launcher: applies OpenShell's Landlock and seccomp policy and starts the agent |
+| `openshell-supervisor-fence` | the sandbox's user | a launcher of this driver: puts a Landlock fence around the supervisor, then becomes it |
 
 Two programs, because the gateway accepts a driver socket of its own
 user only, and that user cannot start system units. The helper is the
@@ -59,8 +59,13 @@ Three instances of unit templates, named by the sandbox's ID (a UUID):
 | Unit | Runs | As | Network |
 |---|---|---|---|
 | `openshell-sandbox-netns@ID.service` | makes and holds the sandbox's network namespace | root, one capability | a namespace with loopback only |
-| `openshell-sandbox-supervisor@ID.service` | `openshell-supervisor` | `openshell-sandbox` | the host's |
-| `openshell-sandbox-workload@ID.service` | `openshell-sandbox`, which starts the agent | `openshell-sandbox` | the namespace of the first unit |
+| `openshell-sandbox-supervisor@ID.service` | `openshell-supervisor` | the sandbox's user | the host's |
+| `openshell-sandbox-workload@ID.service` | `openshell-sandbox`, which starts the agent | the sandbox's user | the namespace of the first unit |
+
+Every sandbox has a host user and group of its own, named `osb-<UID>`,
+which the helper takes from a range of user IDs (70000 to 79999 unless
+set otherwise) and keeps for the sandbox's life. The sandbox's files
+are that user's.
 
 The workload has no network interface but loopback. Whatever it sends
 out goes over a Unix socket to its supervisor, which decides by the
@@ -72,11 +77,11 @@ sandbox's policy ([chapter 4](04-network-policy.md)).
 |---|---|
 | the workload has no route to the network | the kernel: a network namespace (`PrivateNetwork=`) |
 | which hosts a workload reaches, with which program | OpenShell's supervisor, by the sandbox's policy |
-| which files the workload reads and writes | the host's file modes for the user `openshell-sandbox`; OpenShell's Landlock policy, set by `openshell-sandbox`; the unit's mount namespace; SELinux |
+| which files the workload reads and writes | the host's file modes for the sandbox's user; OpenShell's Landlock policy, set by `openshell-sandbox`; the unit's mount namespace; SELinux |
 | which system calls the workload makes | OpenShell's seccomp filter, set by `openshell-sandbox` |
 | the workload gains no privilege | systemd: no capabilities, `NoNewPrivileges=yes` |
 | the workload sees and signals only its own processes | the kernel: a process ID namespace (`PrivatePIDs=`) |
-| one sandbox cannot use another's files | SELinux categories; for supervisors also a Landlock fence and the unit's mount namespace |
+| one sandbox cannot use another's files or signal its processes | the kernel: each sandbox is another user; SELinux categories; for supervisors also a Landlock fence and the unit's mount namespace |
 | the helper does only what it is for | the protocol; a Landlock fence; an SELinux domain; five capabilities |
 
 None of this is held only by code in the driver. The driver has no
@@ -93,9 +98,9 @@ layers and their limits.
   ([chapter 6](06-operation.md#limits)).
 - **Suspend and resume**, and authenticating a sandbox's credentials on
   the gateway's behalf.
-- **A workload user per sandbox.** Every sandbox runs as
-  `openshell-sandbox`; a policy that asks for another user or group is
-  refused.
+- **A workload user of the requester's choice.** Every sandbox runs as
+  a user the helper chooses; a policy that asks for a particular user
+  or group is refused.
 - **Hosts other than SLES 16 and openSUSE Leap 16.** It needs systemd
   257 and was tested on Leap 16.0 only.
 
@@ -107,7 +112,7 @@ layers and their limits.
 | the gateway's user | the host user the gateway runs as; the driver runs as the same user, and the helper serves that user only |
 | workload | what runs in a sandbox: `openshell-sandbox` and everything it starts, the agent among it |
 | supervisor | `openshell-supervisor` of one sandbox |
-| the workloads' user | `openshell-sandbox`, the one user every supervisor and workload runs as |
+| the sandbox's user | the host user and group `osb-<UID>` that one sandbox's supervisor and workload run as, and no other sandbox's |
 | launch | one start of a sandbox: the helper writes its files anew, all but the workspace |
 | launch files | what a supervisor and a workload are started with: bootstrap file, TLS identity, token, runtime descriptor |
 | workspace | the sandbox's own directory, `/sandbox` inside it; kept from launch to launch |

@@ -117,15 +117,24 @@ wait_phase() {
 label_of() { tr -d '\0' <"/proc/$1/attr/current"; }
 # The categories of a process: what follows ":s0:" in its label.
 categories_of() { label_of "$1" | sed -n 's/^.*:s0:\(c[0-9]*,c[0-9]*\)$/\1/p'; }
-# reads_as CATEGORIES FILE: reads a file in the workload's domain, as its
-# user and with these categories, but outside every sandbox's namespaces:
-# what a workload that had left its namespaces could do.
+# reads_as CATEGORIES FILE: reads a file in the workload's domain, as the
+# file's own user and with these categories, but outside every sandbox's
+# namespaces. The file modes allow it: what is refused, the categories
+# refuse.
 reads_as() {
-	systemd-run --quiet --wait --collect -p User=openshell-sandbox \
+	systemd-run --quiet --wait --collect -p "User=$(stat -c %u "$2")" -p "Group=$(stat -c %g "$2")" \
 		-p "SELinuxContext=system_u:system_r:openshell_sandbox_t:s0:$1" \
 		/usr/local/bin/driver-test-cat "$2"
 }
+# user_of ID: the user the helper gave a sandbox.
+user_of() { cat "$state/$1/uid" 2>/dev/null; }
+# as_user UID COMMAND…: as that user and its group and nothing more, from
+# here: outside the sandboxes' namespaces, SELinux domains and fences.
+# What is refused, the kernel's own check of users refuses.
+as_user() { setpriv --reuid "$1" --regid "$1" --clear-groups "${@:2}"; }
 main_pid() { systemctl show "$1" -p MainPID --value; }
+# The user a sandbox's workload runs as right now.
+user_of_running() { stat -c %u "/proc/$(main_pid "openshell-sandbox-workload@$1.service")"; }
 # has FILE PATTERN / lacks FILE PATTERN: a line of the workload's report.
 has() { grep -E -- "$2" "$1"; }
 lacks() { ! grep -E -- "$2" "$1"; }
@@ -141,7 +150,7 @@ for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-syst
 	check "$f is installed" test -x "$f"
 done
 check "the driver names its version" sh -c '/usr/bin/openshell-driver-systemd --version | grep -E "[0-9]+\.[0-9]+\.[0-9]+"'
-check "the workloads' user exists and is not root" sh -c 'u=$(id -u openshell-sandbox) && [ "$u" != 0 ]'
+check "the user the unit templates name exists and is not root" sh -c 'u=$(id -u openshell-sandbox) && [ "$u" != 0 ]'
 check "the unit templates are valid" systemd-analyze verify \
 	/usr/lib/systemd/system/openshell-systemd-helper.service \
 	/usr/lib/systemd/system/openshell-sandbox-netns@.service \
@@ -272,6 +281,14 @@ cat "$r" 2>&1 | cut -c1-200
 section "the units"
 sup=$(main_pid "openshell-sandbox-supervisor@$id.service")
 wl=$(main_pid "openshell-sandbox-workload@$id.service")
+uid=$(user_of "$id")
+echo "the sandbox's user: ${uid:-none}; passwd in nsswitch.conf: $(grep -h '^passwd' /etc/nsswitch.conf /usr/etc/nsswitch.conf 2>/dev/null | head -n 1); /run/userdb: $(ls -Zd /run/userdb 2>&1); userdbd: $(systemctl is-active systemd-userdbd.socket 2>&1)"
+ls -lZ /run/userdb 2>&1 | cut -c1-200
+check "the sandbox has a user of its own, from the helper's range" sh -c "[ '$uid' -ge 70000 ] && [ '$uid' -le 79999 ]"
+check "no account in the users' file has that number" sh -c "! grep -q '^[^:]*:[^:]*:$uid:' /etc/passwd"
+check "the host knows the user by its name" sh -c "[ \"\$(id -un $uid)\" = osb-$uid ]"
+check "and its group" sh -c "[ \"\$(getent group $uid | cut -d: -f1)\" = osb-$uid ]"
+check "the drop-ins name the user for both units" sh -c "grep -qx User=$uid /run/systemd/system/openshell-sandbox-supervisor@$id.service.d/40-user.conf /run/systemd/system/openshell-sandbox-workload@$id.service.d/40-user.conf"
 check "the namespace's unit names its domain" sh -c "systemctl show openshell-sandbox-netns@$id.service -p SELinuxContext --value | grep -q ':openshell_sandbox_netns_t:'"
 check "the namespace's unit has done its work" sh -c "[ \"\$(systemctl show openshell-sandbox-netns@$id.service -p Result --value)\" = success ]"
 # The unit's process is gone by now. What its domain allows is shown by a
@@ -294,8 +311,9 @@ refuse "the workload's unit holds the supervisors' runtime directories" nsenter 
 check "the workload has shared memory of its own" sh -c "[ \"\$(readlink /proc/$wl/ns/ipc)\" != \"\$(readlink /proc/1/ns/ipc)\" ]"
 check "the supervisor runs in its domain" sh -c "tr -d '\\0' </proc/$sup/attr/current | grep -q ':openshell_supervisor_t:'"
 check "the workload runs in its domain" sh -c "tr -d '\\0' </proc/$wl/attr/current | grep -q ':openshell_sandbox_t:'"
-check "the supervisor is not root" sh -c "[ \"\$(stat -c %U /proc/$sup)\" = openshell-sandbox ]"
-check "the workload is not root" sh -c "[ \"\$(stat -c %U /proc/$wl)\" = openshell-sandbox ]"
+check "the supervisor runs as the sandbox's user" sh -c "[ \"\$(stat -c %u:%g /proc/$sup)\" = $uid:$uid ]"
+check "the workload runs as the sandbox's user" sh -c "[ \"\$(stat -c %u:%g /proc/$wl)\" = $uid:$uid ]"
+check "the workspace is the sandbox's user's alone" sh -c "[ \"\$(stat -c '%u %a' $d/workspace)\" = '$uid 700' ]"
 check "the workload has a network namespace of its own" sh -c "[ \"\$(readlink /proc/$wl/ns/net)\" != \"\$(readlink /proc/1/ns/net)\" ]"
 check "the workload has a process ID namespace of its own" sh -c "[ \"\$(readlink /proc/$wl/ns/pid)\" != \"\$(readlink /proc/1/ns/pid)\" ]"
 check "the supervisor's files have their label" sh -c "ls -Zd $d/supervisor | grep -q openshell_supervisor_conf_t"
@@ -306,12 +324,12 @@ check "the workload has a pair of categories" test -n "$level"
 check "its supervisor has the same pair" sh -c "[ \"$(categories_of "$sup")\" = \"$level\" ]"
 check "the workspace carries the pair" sh -c "ls -Zd $d/workspace | grep -q ':s0:$level '"
 check "the supervisor's files carry the pair" sh -c "ls -Zd $d/supervisor | grep -q ':s0:$level '"
-check "the credentials are the workloads' user's alone" sh -c "[ \"\$(stat -c '%U %a' $d/etc/sandbox.jwt)\" = 'openshell-sandbox 600' ]"
+check "the credentials are the sandbox's user's alone" sh -c "[ \"\$(stat -c '%u %a' $d/etc/sandbox.jwt)\" = '$uid 600' ]"
 
 section "what the workload can do"
 check "the workload finished its report" has "$r" '^report done'
 check "it runs in the workload's domain" has "$r" '^context: .*:openshell_sandbox_t:'
-check "it runs as the workloads' user" has "$r" '^user: openshell-sandbox$'
+check "it runs as the sandbox's user, and knows its name" has "$r" "^user: osb-$uid\$"
 check "it has no capabilities" has "$r" '^CapEff: *0000000000000000$'
 check "it cannot gain privileges" has "$r" '^NoNewPrivs: *1$'
 check "a seccomp filter is on" has "$r" '^Seccomp: *2$'
@@ -332,7 +350,11 @@ check "it cannot connect to systemd" lacks "$r" '^systemd: CONNECTED'
 check "it cannot connect to journald" lacks "$r" '^journald: CONNECTED'
 
 section "through the gateway"
-check "a command runs in the sandbox" sh -c "timeout 90 openshell sandbox exec $name -- id -un | grep -qx openshell-sandbox"
+check "a command runs in the sandbox, as its user" sh -c "timeout 90 openshell sandbox exec $name -- id -u | grep -qx $uid"
+check "the user has its name there" sh -c "timeout 90 openshell sandbox exec $name -- id -un | grep -qx osb-$uid"
+check "the sandbox has its own user's record" inside "$name" test -r "/etc/userdb/osb-$uid.user"
+refuse "and no other's" inside "$name" sh -c 'ls /etc/userdb | grep -v "^osb-'"$uid"'\.\|^'"$uid"'\." | grep -q .'
+refuse "the host's records of every sandbox's user are not there" inside "$name" sh -c 'ls /run/userdb 2>/dev/null | grep -q .'
 check "its name service is the sandbox's" sh -c "timeout 90 openshell sandbox exec $name -- getent hosts example.com"
 check "an image is refused" sh -c "timeout 120 openshell sandbox create --name withimage --from registry.example/image:1 --detach -- true 2>&1 | grep -q 'takes no image'"
 openshell sandbox delete withimage >/dev/null 2>&1
@@ -376,6 +398,9 @@ work "files are found and searched" 'find /usr/share/doc -maxdepth 1 | head -n 3
 # What stays out of reach, as before the work.
 refuse "it still cannot ask systemd for a unit's state" inside "$name" systemctl status openshell-systemd-helper.service
 refuse "it still cannot read the journal" inside "$name" sh -c 'journalctl -n 1 --no-pager 2>/dev/null | grep -q .'
+# journald keeps a file for the sandbox's user and would let it read it.
+check "the host has a journal of the sandbox's user" sh -c "journalctl _UID=$uid -n 1 --no-pager -o cat | grep -q ."
+refuse "the workload does not see the journals' directory" inside "$name" sh -c 'ls /var/log/journal 2>/dev/null | grep -q .'
 
 section "restarts under a running sandbox"
 asuser "systemctl --user restart openshell-driver-systemd.service"
@@ -449,8 +474,12 @@ supb=$(main_pid "openshell-sandbox-supervisor@$idb.service")
 wlb=$(main_pid "openshell-sandbox-workload@$idb.service")
 supa=$(main_pid "openshell-sandbox-supervisor@$id.service")
 check "the second has a network namespace of its own" sh -c "[ \"\$(readlink /proc/$wlb/ns/net)\" != \"\$(readlink /proc/\$(systemctl show openshell-sandbox-workload@$id.service -p MainPID --value)/ns/net)\" ]"
+uidb=$(user_of "$idb")
+echo "users: $uid and ${uidb:-none}"
+check "the second sandbox has a user of its own" sh -c "[ -n '$uidb' ] && [ '$uidb' != '$uid' ] && [ \"\$(stat -c %u /proc/$wlb)\" = '$uidb' ]"
 # One sandbox's files against another's categories, where neither the
-# namespaces nor the file modes stand in the way: both run as one user.
+# namespaces nor the file modes stand in the way: the reader is given the
+# file's own user.
 levelb=$(categories_of "$wlb")
 echo "categories: $level and ${levelb:-none}"
 check "the second sandbox has a pair of categories" test -n "$levelb"
@@ -462,35 +491,44 @@ check "outside the namespaces, a sandbox's file is read with its categories" rea
 refuse "outside the namespaces, it is refused with another sandbox's categories" reads_as "$level" "$state/$idb/workspace/theirs"
 refuse "and so is the other supervisor's token" reads_as "$level" "$state/$idb/etc/sandbox.jwt"
 rm -f /usr/local/bin/driver-test-cat
-# One supervisor against another sandbox's files. Every supervisor is the
-# same user, so file modes let it read them. Started from here, the
-# launcher is outside the supervisor's SELinux domain and without
-# categories: what it is refused, the fence alone refuses.
-as_supervisor_of() {
-	local of=$1 mode=$2
-	shift 2
-	runuser -u openshell-sandbox -- /usr/libexec/openshell/openshell-supervisor-fence --landlock "$mode" \
-		--runtime-dir "/run/openshell-sandbox/$of" -- "$@"
+# One sandbox's user against another's files and processes, with nothing
+# else in the way: from here there is no namespace, no SELinux domain and
+# no fence. The kernel's check of users refuses.
+check "a sandbox's user reads its own workspace" as_user "$uidb" /usr/bin/cat "$state/$idb/workspace/theirs"
+refuse "one sandbox's user cannot read another's workspace" as_user "$uid" /usr/bin/cat "$state/$idb/workspace/theirs"
+refuse "one sandbox's user cannot read another's token" as_user "$uid" /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
+refuse "one sandbox's user cannot list another supervisor's runtime directory" as_user "$uid" /usr/bin/ls "/run/openshell-sandbox/$idb"
+check "a sandbox's user asks whether its own supervisor is there" as_user "$uidb" /usr/bin/kill -0 "$supb"
+refuse "one sandbox's user cannot ask that of another's supervisor" as_user "$uid" /usr/bin/kill -0 "$supb"
+refuse "one sandbox's user cannot signal another's supervisor" as_user "$uid" /usr/bin/kill -CONT "$supb"
+refuse "one sandbox's user cannot signal another's workload" as_user "$uid" /usr/bin/kill -CONT "$wlb"
+# The supervisor's fence, alone: its launcher as root, whom file modes
+# refuse nothing, outside the supervisor's SELinux domain. What is
+# refused, the fence refuses.
+behind_fence_of() {
+	/usr/libexec/openshell/openshell-supervisor-fence --landlock "$2" \
+		--runtime-dir "/run/openshell-sandbox/$1" -- "${@:3}"
 }
-check "behind its fence, a supervisor's program lists its own runtime directory" as_supervisor_of "$idb" required /usr/bin/ls "/run/openshell-sandbox/$idb"
-check "without the fence, a supervisor's user reads another sandbox's token" as_supervisor_of "$id" off /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
-refuse "behind its fence, it cannot read another sandbox's token" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
-refuse "behind its fence, it cannot read another sandbox's workspace" as_supervisor_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"
-refuse "behind its fence, it cannot list the other supervisor's runtime directory" as_supervisor_of "$id" required /usr/bin/ls "/run/openshell-sandbox/$idb"
-# One supervisor's processes against another's, in the supervisor's SELinux
-# domain and with the first sandbox's categories: a signal.
+check "behind a supervisor's fence, its own runtime directory is listed" behind_fence_of "$idb" required /usr/bin/ls "/run/openshell-sandbox/$idb"
+check "without the fence, root reads another sandbox's token" behind_fence_of "$id" off /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
+refuse "behind the fence, root cannot read another sandbox's token" behind_fence_of "$id" required /usr/bin/cat "$state/$idb/etc/sandbox.jwt"
+refuse "behind the fence, root cannot read another sandbox's workspace" behind_fence_of "$id" required /usr/bin/cat "$state/$idb/workspace/theirs"
+refuse "behind the fence, root cannot list the other supervisor's runtime directory" behind_fence_of "$id" required /usr/bin/ls "/run/openshell-sandbox/$idb"
+# One supervisor's processes against another's by the categories alone: in
+# the supervisor's SELinux domain, as the user of the process that is
+# signalled, with the first sandbox's categories.
 install -m 0755 /usr/bin/kill /usr/local/bin/driver-test-kill
 chcon -t openshell_supervisor_exec_t /usr/local/bin/driver-test-kill
 signals_as() {
-	systemd-run --quiet --wait --collect -p User=openshell-sandbox \
+	systemd-run --quiet --wait --collect -p "User=$(stat -c %u "/proc/$3")" -p "Group=$(stat -c %g "/proc/$3")" \
 		-p "SELinuxContext=system_u:system_r:openshell_supervisor_t:s0:$1" \
 		/usr/local/bin/driver-test-kill "$2" "$3"
 }
 check "in its domain, a supervisor's program signals a process of its own sandbox" signals_as "$levelb" -0 "$supb"
 refuse "with another sandbox's categories, it cannot send that supervisor a signal" signals_as "$level" -CONT "$supb"
 # Not a check: signal 0, which only asks whether a process is there, is
-# not held to the categories by the distribution's policy
-# (docs/security-review-0.1.md, S2).
+# not held to the categories by the distribution's policy. The sandboxes'
+# users are what refuses it (above).
 echo "another sandbox's categories, signal 0: $(signals_as "$level" -0 "$supb" && echo delivered || echo refused)"
 rm -f /usr/local/bin/driver-test-kill
 refuse "a workload cannot signal its own supervisor" inside "$name" sh -c "kill -0 $supa"
@@ -503,6 +541,7 @@ check "the second sandbox is still ready" sh -c "[ \"\$(openshell sandbox get se
 check "the second sandbox is deleted" timeout 120 openshell sandbox delete second
 sleep 3
 refuse "the second sandbox's files are gone" test -e "$state/$idb"
+refuse "the second sandbox's user has no name any more" sh -c "ls /run/userdb | grep -q '^osb-$uidb\.\|^$uidb\.'"
 
 section "a workload that dies"
 p=$(main_pid "openshell-sandbox-workload@$id.service")
@@ -516,6 +555,8 @@ refuse "no unit of a stopped sandbox is active" systemctl is-active --quiet "ope
 check "the sandbox starts again" timeout 120 openshell sandbox start "$name"
 check "the sandbox is ready again" wait_phase "$name" Ready
 check "its workspace was kept" inside "$name" test -e /sandbox/driver-test
+check "it has the user it had" test "$(user_of_running "$id")" = "$uid"
+check "its workspace is written again" inside "$name" touch /sandbox/after-restart
 check "the sandbox is deleted" timeout 120 openshell sandbox delete "$name"
 sleep 3
 refuse "its files are gone" test -e "$d"

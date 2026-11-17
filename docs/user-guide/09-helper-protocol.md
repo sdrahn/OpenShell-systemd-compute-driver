@@ -29,6 +29,9 @@ The definition is `src/protocol.rs`.
   (`SO_PEERCRED`) for every connection. Root is not served either.
 - A sandbox's name and OpenShell workspace are stored and returned;
   they are never used as a path.
+- A request cannot name a user. The helper chooses a sandbox's user
+  from its own range, never root and never an account of the host, and
+  reads it back only from a file of root's.
 
 ## Transport {#transport}
 
@@ -60,10 +63,11 @@ print(s.recv(65536).decode())' '"describe"'
 | Request | JSON | Does | Good answer |
 |---|---|---|---|
 | describe | `"describe"` | nothing | `described` |
-| provision | `{"provision": {…}}` | stops the sandbox's units; writes its launch files anew, all but the workspace; labels them; writes the SELinux drop-ins | `done` |
-| start | `{"start": {"sandbox_id": "ID"}}` | starts the sandbox's units | `done`, `not_found` |
+| reserve | `{"reserve": {"sandbox_id": "ID"}}` | gives the sandbox a user: the one it has, or the lowest free ID of the range. Makes the sandbox's directory for it | `reserved` |
+| provision | `{"provision": {…}}` | stops the sandbox's units; writes its launch files anew, all but the workspace, as the sandbox's user's; labels them. Refused for a sandbox without a reserved user | `done` |
+| start | `{"start": {"sandbox_id": "ID"}}` | writes the user's name and the drop-ins (user, SELinux level) where they are missing; starts the sandbox's units | `done`, `not_found` |
 | stop | `{"stop": {"sandbox_id": "ID"}}` | stops the units; keeps the files | `done`, `not_found` |
-| delete | `{"delete": {"sandbox_id": "ID"}}` | stops the units; removes the sandbox's directory, the workspace too, and its drop-ins | `done`, `not_found` |
+| delete | `{"delete": {"sandbox_id": "ID"}}` | stops the units; removes the sandbox's directory, the workspace too, its drop-ins and its user's name | `done`, `not_found` |
 | status | `{"status": {"sandbox_id": "ID"}}` | reads the units' state | `status`, `not_found` |
 | list | `"list"` | reads every sandbox's state | `listed` |
 
@@ -91,7 +95,8 @@ credentials among these fields are not logged by either side.
 | Answer | JSON |
 |---|---|
 | done | `"done"` |
-| described | `{"described": {"version": "0.1.0", "uid": 464, "gid": 464}}`: the helper's version and the user and group of every workload |
+| described | `{"described": {"version": "0.1.0", "first_uid": 70000, "last_uid": 79999}}`: the helper's version and the range its sandboxes' users are from |
+| reserved | `{"reserved": {"uid": 70000, "gid": 70000}}`: the host user and group of this sandbox |
 | status | `{"status": RECORD}` |
 | listed | `{"listed": {"sandboxes": [RECORD, …]}}` |
 | not found | `"not_found"`: the helper holds no files for this sandbox |
@@ -128,11 +133,13 @@ what changed.
 
 | The gateway asks for | The driver sends |
 |---|---|
-| a new sandbox | `status` (it must not exist), `provision`, `start`; `delete` if either fails, so that nothing of a failed launch is left |
-| start of a stopped sandbox | `provision` with new launch files (the token is kept if the gateway sends none), `start` |
+| a new sandbox | `status` (it must not exist), `reserve`, `provision`, `start`; `delete` if one fails, so that nothing of a failed launch is left |
+| start of a stopped sandbox | `reserve` (the user it has), `provision` with new launch files (the token is kept if the gateway sends none), `start` |
 | stop | `stop` |
 | delete | `delete` |
 | the sandboxes and their state | `list`, `status` |
 
-At its own start the driver sends `describe`, to learn the workloads'
-user and group.
+At its own start the driver sends `describe`, to see that the helper
+is there. The user comes before the launch files because they name it:
+OpenShell's workload identity is part of what the gateway signs for a
+launch.
