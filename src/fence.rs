@@ -25,7 +25,8 @@ const FILES: ABI = ABI::V3;
 /// TCP is covered from this version on (Linux 6.7).
 const NETWORK: ABI = ABI::V4;
 
-/// What stays in reach. A path that does not exist is left out.
+/// What stays in reach. A path that does not exist, or that the program
+/// may not even look at, is left out: the fence is then the tighter.
 #[derive(Clone, Debug, Default)]
 pub struct Fence {
     /// Read, and run programs from.
@@ -104,6 +105,17 @@ impl Fence {
         ];
         for (paths, access) in grants {
             for path in paths {
+                // Landlock asks what kind of file a path is. Where that
+                // is refused (by SELinux, for one), there is nothing to
+                // grant.
+                match std::fs::metadata(path) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        tracing::warn!(path = %path.display(), %error, "Left out of the Landlock fence");
+                        continue;
+                    }
+                }
                 let Ok(fd) = PathFd::new(path) else {
                     continue;
                 };

@@ -120,7 +120,6 @@ fn fence(state_dir: &Path, socket: &Path) -> Fence {
         read: paths(&[
             "/etc",
             "/dev/urandom",
-            "/dev/random",
             "/proc",
             "/sys",
             "/run",
