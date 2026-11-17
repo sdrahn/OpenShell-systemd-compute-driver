@@ -9,6 +9,7 @@
 pub mod config;
 pub mod driver;
 pub mod envfile;
+pub mod fence;
 pub mod grpc;
 mod helper;
 mod isolation;

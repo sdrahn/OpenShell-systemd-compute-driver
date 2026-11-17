@@ -18,6 +18,7 @@ use clap::Parser;
 use miette::{IntoDiagnostic, Result, miette};
 use openshell_driver_systemd::config::DEFAULT_HELPER_SOCKET;
 use openshell_driver_systemd::envfile;
+use openshell_driver_systemd::fence::{Fence, Outcome, Requirement};
 use openshell_driver_systemd::protocol::{
     MAX_MESSAGE_BYTES, Provision, Request, Response, SandboxRecord, UnitState, valid_sandbox_id,
 };
@@ -73,6 +74,110 @@ struct Args {
 
     #[arg(long, env = "OPENSHELL_LOG_LEVEL", default_value = "info")]
     log_level: String,
+
+    /// The Landlock fence the helper puts around itself before it serves
+    /// a request: `required` fails on a kernel that cannot hold it to its
+    /// files, `best-effort` goes on with what the kernel offers, `off`
+    /// asks for none.
+    #[arg(
+        long,
+        env = "OPENSHELL_SYSTEMD_HELPER_LANDLOCK",
+        value_enum,
+        default_value = "required"
+    )]
+    landlock: Landlock,
+
+    /// Enter the fence, try what it must refuse and what it must allow,
+    /// print each result and exit: 0 if all are as they must be.
+    #[arg(long)]
+    self_test: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum Landlock {
+    Required,
+    BestEffort,
+    Off,
+}
+
+/// Where a sandbox's units get their drop-ins.
+const UNIT_DIR: &str = "/run/systemd/system";
+
+/// What the helper needs once it serves, and what the programs it runs
+/// need (`systemctl`, `restorecon`, `chcon`, `stat`): everything else of
+/// the host is out of its reach, as root too.
+fn fence(state_dir: &Path, socket: &Path) -> Fence {
+    let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let mut read_write = vec![state_dir.to_path_buf(), PathBuf::from(UNIT_DIR)];
+    read_write.extend(socket.parent().map(Path::to_path_buf));
+    // /dev/null alone of the devices, and the files through which a label
+    // is checked.
+    read_write.extend(paths(&["/dev/null", "/sys/fs/selinux"]));
+    Fence {
+        read_execute: paths(&["/usr"]),
+        // The mount points are read for their labels; the journal for a
+        // failed unit's last lines.
+        read: paths(&[
+            "/etc",
+            "/dev/urandom",
+            "/proc",
+            "/sys",
+            "/run",
+            "/var/log/journal",
+            "/.openshell",
+            "/sandbox",
+        ]),
+        read_write,
+        no_tcp: true,
+    }
+}
+
+/// Tries, inside the fence, what it must refuse and what it must allow.
+fn self_test(state_dir: &Path, outcome: Outcome) -> bool {
+    let denied = |error: &std::io::Error| error.kind() == std::io::ErrorKind::PermissionDenied;
+    let probe = state_dir.join(".self-test");
+    let etc = Path::new("/etc/openshell-systemd-helper-self-test");
+    let checks = [
+        (
+            "the kernel holds the helper to its files",
+            outcome != Outcome::None,
+        ),
+        (
+            "its state directory is written",
+            std::fs::write(&probe, "x").is_ok() && std::fs::remove_file(&probe).is_ok(),
+        ),
+        (
+            "a program in /usr is read",
+            std::fs::read("/usr/bin/stat").is_ok(),
+        ),
+        ("/etc is read", std::fs::read("/etc/passwd").is_ok()),
+        (
+            "nothing is created in /etc",
+            std::fs::write(etc, "x").is_err_and(|error| denied(&error)),
+        ),
+        (
+            "/root is not read",
+            std::fs::read_dir("/root").is_err_and(|error| denied(&error)),
+        ),
+        (
+            "/home is not read",
+            std::fs::read_dir("/home").is_err_and(|error| denied(&error)),
+        ),
+        (
+            "/var/lib is not read beyond its own",
+            std::fs::read_dir("/var/lib").is_err_and(|error| denied(&error)),
+        ),
+        (
+            "no TCP port is taken",
+            std::net::TcpListener::bind("127.0.0.1:0").is_err_and(|error| denied(&error)),
+        ),
+    ];
+    let mut all = true;
+    for (what, passed) in checks {
+        println!("{} {what}", if passed { "ok  " } else { "FAIL" });
+        all &= passed;
+    }
+    all
 }
 
 /// A sandbox's pair of `SELinux` categories, two of `c0` to `c1023`. Its
@@ -738,8 +843,7 @@ fn bind(socket: &Path, uid: u32) -> Result<UnixListener> {
     Ok(listener)
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -776,23 +880,56 @@ async fn main() -> Result<()> {
     .map_err(|message| miette!("{message}"))?;
     relabel(&[args.state_dir.as_os_str()]).map_err(|message| miette!("{message}"))?;
     let categories = policy_module_in_use();
+    if let Some(parent) = args.socket.parent() {
+        std::fs::create_dir_all(parent).into_diagnostic()?;
+    }
+    // The fence, before there is a second thread: it holds the thread that
+    // enters it and what that thread starts.
+    let fenced = match args.landlock {
+        Landlock::Off => Outcome::None,
+        Landlock::Required => fence(&args.state_dir, &args.socket)
+            .enter(Requirement::Required)
+            .map_err(|message| miette!("{message}"))?,
+        Landlock::BestEffort => fence(&args.state_dir, &args.socket)
+            .enter(Requirement::BestEffort)
+            .map_err(|message| miette!("{message}"))?,
+    };
+    if args.self_test {
+        if self_test(&args.state_dir, fenced) {
+            return Ok(());
+        }
+        return Err(miette!("the fence is not as it must be"));
+    }
+    if fenced == Outcome::None {
+        warn!("The helper runs without a Landlock fence");
+    }
     let helper = Helper {
         state_dir: args.state_dir,
-        unit_dir: PathBuf::from("/run/systemd/system"),
+        unit_dir: PathBuf::from(UNIT_DIR),
         categories,
         owner_uid: 0,
         owner_gid: 0,
         workload_uid: workload.uid.as_raw(),
         workload_gid: workload.gid.as_raw(),
     };
-    let listener = bind(&args.socket, allowed)?;
     info!(
         socket = %args.socket.display(),
         allow_user = %args.allow_user,
         workload_user = %args.workload_user,
         selinux_categories = categories,
+        landlock = ?fenced,
         "Starting systemd helper"
     );
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .into_diagnostic()?
+        .block_on(serve(helper, &args.socket, allowed))
+}
+
+/// Serves the allowed user's requests until the helper is told to end.
+async fn serve(helper: Helper, socket: &Path, allowed: u32) -> Result<()> {
+    let listener = bind(socket, allowed)?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .into_diagnostic()?;
     loop {
@@ -819,7 +956,7 @@ async fn main() -> Result<()> {
             }
         }
     }
-    let _ = std::fs::remove_file(&args.socket);
+    let _ = std::fs::remove_file(socket);
     Ok(())
 }
 
