@@ -9,6 +9,22 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.1.3 — 2026-11-18
+
+A fix release: creating a sandbox no longer fails now and then with
+"ContainerStopped" while its units are being started. After the
+update, restart the driver as the gateway's user (`systemctl --user
+restart openshell-driver-systemd.service`); sandboxes that run are not
+touched.
+
+### Fixed
+
+- Creating a sandbox no longer fails now and then with "sandbox
+  entered error phase while provisioning: ContainerStopped". While the
+  driver launches a sandbox, its units are reported as starting; before,
+  the driver's periodic check could report them as stopped between
+  provisioning and start, and the gateway failed the creation.
+
 ## v0.1.2 — 2026-11-17
 
 A fix release: a sandbox's supervisor reads the host's CA certificates,
