@@ -9,7 +9,7 @@
 //! user. The driver builds a launch's files and hands them to a privileged
 //! helper, which writes them and starts the units from fixed templates.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -48,6 +48,54 @@ pub struct SystemdComputeDriver {
     events: tokio::sync::broadcast::Sender<WatchSandboxesEvent>,
     /// What the watch last reported for each sandbox.
     observed: Arc<Mutex<HashMap<String, SandboxRecord>>>,
+    /// The sandboxes being launched now.
+    launches: Launches,
+}
+
+/// The sandboxes the driver is launching. Between the helper's
+/// provisioning and its start of the units, a sandbox's units exist and
+/// are inactive: reported as such, the gateway takes the new sandbox for
+/// one that stopped and fails its creation. While its launch runs, a
+/// sandbox with inactive units is starting.
+#[derive(Clone, Default)]
+struct Launches(Arc<Mutex<HashSet<String>>>);
+
+/// A launch in progress; it ends when this is dropped, on every way out
+/// of the launch.
+struct Launch {
+    launches: Launches,
+    sandbox_id: String,
+}
+
+impl Launches {
+    fn set(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn begin(&self, sandbox_id: &str) -> Launch {
+        self.set().insert(sandbox_id.to_string());
+        Launch {
+            launches: self.clone(),
+            sandbox_id: sandbox_id.to_string(),
+        }
+    }
+
+    /// A record as the gateway is to see it.
+    fn seen(&self, mut record: SandboxRecord) -> SandboxRecord {
+        if record.state == UnitState::Inactive && self.set().contains(&record.sandbox_id) {
+            record.state = UnitState::Transitioning;
+            record.detail = "the sandbox's units are being launched".to_string();
+        }
+        record
+    }
+}
+
+impl Drop for Launch {
+    fn drop(&mut self) {
+        self.launches.set().remove(&self.sandbox_id);
+    }
 }
 
 impl std::fmt::Debug for SystemdComputeDriver {
@@ -168,6 +216,7 @@ impl SystemdComputeDriver {
             helper,
             events,
             observed: Arc::new(Mutex::new(HashMap::new())),
+            launches: Launches::default(),
         };
         tokio::spawn(driver.clone().poll());
         Ok(driver)
@@ -232,6 +281,7 @@ impl SystemdComputeDriver {
         launch_authentication: &[u8],
     ) -> Result<(), ComputeDriverError> {
         self.validate_sandbox_create(sandbox)?;
+        let _launch = self.launches.begin(&sandbox.id);
         if launch_authentication.is_empty() {
             return Err(ComputeDriverError::Precondition(
                 "the sandbox has no launch authentication".to_string(),
@@ -396,7 +446,7 @@ impl SystemdComputeDriver {
             })
             .await?
         {
-            Response::Status(record) => Ok(Some(record)),
+            Response::Status(record) => Ok(Some(self.launches.seen(record))),
             Response::NotFound => Ok(None),
             other => Err(ComputeDriverError::Message(format!(
                 "systemd helper: unexpected answer {other:?}"
@@ -417,7 +467,10 @@ impl SystemdComputeDriver {
 
     async fn records(&self) -> Result<Vec<SandboxRecord>, ComputeDriverError> {
         match self.helper.call(&Request::List).await? {
-            Response::Listed { sandboxes } => Ok(sandboxes),
+            Response::Listed { sandboxes } => Ok(sandboxes
+                .into_iter()
+                .map(|record| self.launches.seen(record))
+                .collect()),
             other => Err(ComputeDriverError::Message(format!(
                 "systemd helper: unexpected answer {other:?}"
             ))),
@@ -553,6 +606,37 @@ mod tests {
         assert_eq!(
             condition(&record(UnitState::Failed, "supervisor failed")).message,
             "supervisor failed"
+        );
+    }
+
+    #[test]
+    fn a_sandbox_being_launched_is_starting_not_stopped() {
+        let launches = Launches::default();
+        let other = SandboxRecord {
+            sandbox_id: "0f0e8f4c-3f7a-4c1e-9d55-0a4f8c2b6e11".into(),
+            ..record(UnitState::Inactive, "")
+        };
+        {
+            let _launch = launches.begin("d6ac9d5f-60aa-4fcb-b050-9a0a4b134205");
+            let seen = launches.seen(record(UnitState::Inactive, ""));
+            assert_eq!(seen.state, UnitState::Transitioning);
+            assert_eq!(condition(&seen).reason, CONDITION_STARTING);
+            // Only inactive units: what the launch already started, or
+            // what failed, is reported as it is.
+            for state in [
+                UnitState::Active,
+                UnitState::Failed,
+                UnitState::Transitioning,
+            ] {
+                assert_eq!(launches.seen(record(state, "x")), record(state, "x"));
+            }
+            // Another sandbox's inactive units are stopped.
+            assert_eq!(launches.seen(other.clone()).state, UnitState::Inactive);
+        }
+        // Once the launch is over, inactive units are stopped again.
+        assert_eq!(
+            launches.seen(record(UnitState::Inactive, "")).state,
+            UnitState::Inactive
         );
     }
 
