@@ -35,7 +35,11 @@ pub const DRIVER_NAME: &str = "systemd";
 pub const HOST_IMAGE: &str = "host";
 
 const CONDITION_RUNNING: &str = "UnitsActive";
-const CONDITION_STARTING: &str = "UnitsStarting";
+/// The gateway takes a `Ready=False` condition for a sandbox still being
+/// provisioned only with a reason from its list of transient ones
+/// (`Starting`, `DependenciesNotReady`, ...); any other reason is an error,
+/// and a creation waiting for the sandbox fails on it.
+const CONDITION_STARTING: &str = "Starting";
 
 pub type WatchStream =
     Pin<Box<dyn Stream<Item = Result<WatchSandboxesEvent, ComputeDriverError>> + Send>>;
@@ -609,6 +613,41 @@ mod tests {
         );
     }
 
+    /// The reasons the gateway of `OpenShell` 0.1.8 (`is_terminal_failure_reason`)
+    /// takes for a sandbox that is still coming up; every other reason of a
+    /// `Ready=False` condition puts the sandbox in the error phase.
+    const GATEWAY_TRANSIENT_REASONS: [&str; 8] = [
+        "ReconcilerError",
+        "DependenciesNotReady",
+        "SupervisorNotConnected",
+        "Starting",
+        "ContainerStarting",
+        "ContainerCreated",
+        "HealthCheckStarting",
+        "InspectFailed",
+    ];
+
+    #[test]
+    fn units_in_transition_are_starting_to_the_gateway() {
+        let reason = condition(&record(UnitState::Transitioning, "activating")).reason;
+        assert!(
+            GATEWAY_TRANSIENT_REASONS
+                .iter()
+                .any(|transient| transient.eq_ignore_ascii_case(&reason)),
+            "{reason} is an error to the gateway"
+        );
+        // Failed units are an error, and so are stopped ones.
+        for state in [UnitState::Failed, UnitState::Inactive] {
+            let reason = condition(&record(state, "")).reason;
+            assert!(
+                !GATEWAY_TRANSIENT_REASONS
+                    .iter()
+                    .any(|transient| transient.eq_ignore_ascii_case(&reason)),
+                "{state:?}: {reason}"
+            );
+        }
+    }
+
     #[test]
     fn a_sandbox_being_launched_is_starting_not_stopped() {
         let launches = Launches::default();
@@ -620,7 +659,7 @@ mod tests {
             let _launch = launches.begin("d6ac9d5f-60aa-4fcb-b050-9a0a4b134205");
             let seen = launches.seen(record(UnitState::Inactive, ""));
             assert_eq!(seen.state, UnitState::Transitioning);
-            assert_eq!(condition(&seen).reason, CONDITION_STARTING);
+            assert_eq!(condition(&seen).reason, "Starting");
             // Only inactive units: what the launch already started, or
             // what failed, is reported as it is.
             for state in [
