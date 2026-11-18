@@ -22,6 +22,7 @@ the helper's journal, and the journal of the sandbox's units
 | `openshell-systemd-helper must run as root` | it was started by hand as another user |
 | `Landlock: file access: …` | the kernel has no Landlock, or one before Linux 6.2. Check `cat /sys/kernel/security/lsm`; add `lsm=landlock,…` to the kernel's command line if it is built in but off. As a last resort `OPENSHELL_SYSTEMD_HELPER_LANDLOCK=best-effort` ([chapter 5](05-security.md#landlock)) |
 | `/usr/bin/stat: …` | SELinux is on and the label of `openshell-sandbox` could not be read. The helper then refuses to start, since it could not tell whether sandboxes need categories |
+| `mount point /sandbox: missing, and its file system is read-only …` (or `/.openshell/…`) | a transactional system whose snapshot lacks the package's mount points, or `Read-only file system (os error 30)` from driver 0.1.4 or earlier, which made them each time the helper started | install the package again (`transactional-update pkg install -f openshell-driver-systemd`) and reboot into the new snapshot; with driver 0.1.4 or earlier, `transactional-update run mkdir -p /.openshell/supervisor /.openshell/channel /sandbox` and reboot |
 | `restorecon: …` | relabelling the mount points failed; the message names the path |
 
 It starts but logs `selinux_categories=false` on a host with SELinux:

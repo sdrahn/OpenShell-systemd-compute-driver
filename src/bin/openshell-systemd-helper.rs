@@ -1192,7 +1192,8 @@ fn main() -> Result<()> {
     }
     let allowed = user(&args.allow_user)?.uid.as_raw();
     for directory in MOUNT_POINT_DIRECTORIES {
-        std::fs::create_dir_all(directory).into_diagnostic()?;
+        std::fs::create_dir_all(directory)
+            .map_err(|error| miette!("{}", mount_point_error(directory, &error)))?;
     }
     for file in MOUNT_POINT_FILES {
         if !Path::new(file).exists() {
@@ -1287,6 +1288,21 @@ async fn serve(helper: Helper, socket: &Path, allowed: u32) -> Result<()> {
     Ok(())
 }
 
+/// What a mount point that could not be made means. On a transactional
+/// system the root file system is a read-only snapshot: there, the
+/// package's own directories (`/.openshell/…`, `/sandbox`) are there, and
+/// one that is missing could only be made in a new snapshot.
+fn mount_point_error(directory: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::ReadOnlyFilesystem {
+        format!(
+            "mount point {directory}: missing, and its file system is read-only (a transactional system?): \
+             the package openshell-driver-systemd ships it; install the package again, in a new snapshot"
+        )
+    } else {
+        format!("mount point {directory}: {error}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1295,6 +1311,26 @@ mod tests {
     use super::*;
 
     const ID: &str = "d6ac9d5f-60aa-4fcb-b050-9a0a4b134205";
+
+    /// A mount point missing on a read-only root says what to do, and
+    /// which one; another error names the mount point too.
+    #[test]
+    fn mount_point_error_names_the_read_only_root() {
+        let readonly = std::io::Error::from(std::io::ErrorKind::ReadOnlyFilesystem);
+        let message = mount_point_error("/sandbox", &readonly);
+        assert!(
+            message.starts_with("mount point /sandbox: missing"),
+            "{message}"
+        );
+        assert!(message.contains("install the package again"), "{message}");
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let message = mount_point_error("/.openshell/channel", &denied);
+        assert!(
+            message.starts_with("mount point /.openshell/channel: "),
+            "{message}"
+        );
+        assert!(!message.contains("read-only"), "{message}");
+    }
 
     fn helper(state_dir: &Path) -> Helper {
         // Tests do not run as root: everything is the test's own.

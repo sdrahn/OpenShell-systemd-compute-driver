@@ -157,6 +157,9 @@ check "the policy module's package is installed" rpm -q openshell-driver-systemd
 # with an older release of the same version can install it.
 check "it requires selinux-policy by version only, not the build's release" bash -c \
 	"r=\$(rpm -q --requires openshell-driver-systemd-selinux | grep -E '^selinux-policy[a-z-]* >= '); [ -n \"\$r\" ] && ! grep -Eq ' >= [^ ]*-' <<<\"\$r\""
+# The mount points are the package's, so that a read-only root (a
+# transactional system) has them before the helper starts.
+check "the package ships the sandboxes' mount points" rpm -qf /.openshell/supervisor /.openshell/channel /sandbox
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
 	/usr/libexec/openshell/openshell-supervisor-fence \
 	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do

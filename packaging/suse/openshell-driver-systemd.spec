@@ -170,6 +170,11 @@ install -D -m 0755 target/release/openshell-supervisor-fence %{buildroot}%{_libe
 install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-supervisor %{buildroot}%{_libexecdir}/openshell/openshell-supervisor
 install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-sandbox %{buildroot}%{_libexecdir}/openshell/openshell-sandbox
 install -d %{buildroot}%{_unitdir} %{buildroot}%{_userunitdir}
+# The mount points the sandbox units bind to (the paths the stock
+# supervisor and openshell-sandbox use in a container). The package makes
+# them: on a transactional system the root file system is read-only once
+# the snapshot is in use, and the helper could not make them there.
+install -d %{buildroot}/.openshell/supervisor %{buildroot}/.openshell/channel %{buildroot}/sandbox
 install -m 0644 systemd/*.service %{buildroot}%{_unitdir}/
 install -m 0644 systemd/user/*.service %{buildroot}%{_userunitdir}/
 install -D -m 0644 packaging/suse/%{name}.sysusers %{buildroot}%{_sysusersdir}/%{name}.conf
@@ -232,6 +237,10 @@ fi
 %{_userunitdir}/openshell-driver-systemd.service
 %{_sysusersdir}/%{name}.conf
 %{_tmpfilesdir}/%{name}.conf
+%dir /.openshell
+%dir /.openshell/supervisor
+%dir /.openshell/channel
+%dir /sandbox
 
 %files docs
 %license LICENSE
