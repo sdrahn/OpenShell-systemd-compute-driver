@@ -153,6 +153,10 @@ inside() { timeout 90 openshell sandbox exec "$1" -- "${@:2}"; }
 section "the packages"
 check "the driver's package is installed" rpm -q openshell-driver-systemd
 check "the policy module's package is installed" rpm -q openshell-driver-systemd-selinux
+# It asks for selinux-policy's version, not the build's release: a host
+# with an older release of the same version can install it.
+check "it requires selinux-policy by version only, not the build's release" bash -c \
+	"r=\$(rpm -q --requires openshell-driver-systemd-selinux | grep -E '^selinux-policy[a-z-]* >= '); [ -n \"\$r\" ] && ! grep -Eq ' >= [^ ]*-' <<<\"\$r\""
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
 	/usr/libexec/openshell/openshell-supervisor-fence \
 	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do
