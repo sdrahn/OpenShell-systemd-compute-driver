@@ -9,6 +9,23 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.1.4 — 2026-11-18
+
+A fix release: creating or starting a sandbox no longer fails now and
+then because the gateway took starting units for an error. 0.1.3 was
+made for this failure and did not fix it. After the update, restart the
+driver as the gateway's user (`systemctl --user restart
+openshell-driver-systemd.service`); sandboxes that run are not touched.
+
+### Fixed
+
+- Creating or starting a sandbox no longer fails now and then with
+  "sandbox entered error phase while provisioning: UnitsStarting". Units
+  that are starting are reported with the reason `Starting`, which the
+  gateway takes for a sandbox still coming up; it took `UnitsStarting`,
+  the reason before, for an error. 0.1.3 reported a sandbox being
+  launched with it and so did not fix the failure it was made for.
+
 ## v0.1.3 — 2026-11-18
 
 A fix release: creating a sandbox no longer fails now and then with

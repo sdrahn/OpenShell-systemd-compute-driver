@@ -4,7 +4,7 @@
 [package]
 name = "openshell-driver-systemd"
 description = "A compute driver for OpenShell that runs sandboxes as systemd units on the gateway's host"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
