@@ -631,7 +631,7 @@ mod tests {
                 assert_eq!(launches.seen(record(state, "x")), record(state, "x"));
             }
             // Another sandbox's inactive units are stopped.
-            assert_eq!(launches.seen(other.clone()).state, UnitState::Inactive);
+            assert_eq!(launches.seen(other).state, UnitState::Inactive);
         }
         // Once the launch is over, inactive units are stopped again.
         assert_eq!(
