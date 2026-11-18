@@ -153,6 +153,9 @@ inside() { timeout 90 openshell sandbox exec "$1" -- "${@:2}"; }
 section "the packages"
 check "the driver's package is installed" rpm -q openshell-driver-systemd
 check "the policy module's package is installed" rpm -q openshell-driver-systemd-selinux
+# The mount points are the package's, so that a read-only root (a
+# transactional system) has them before the helper starts.
+check "the package ships the sandboxes' mount points" rpm -qf /.openshell/supervisor /.openshell/channel /sandbox
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
 	/usr/libexec/openshell/openshell-supervisor-fence \
 	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do
