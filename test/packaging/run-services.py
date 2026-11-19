@@ -1,13 +1,14 @@
 #!/usr/bin/python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
 # SPDX-License-Identifier: Apache-2.0
-"""run-services.py _SERVICE DIR [REPO REVISION]: run the OBS source
+"""run-services.py _SERVICE DIR [URL REVISION]: run the OBS source
 services of _SERVICE in DIR, as `osc service manualrun` runs them in a
 package's checkout (_service and the spec): each in turn as /usr/lib/obs/service/<name> with its
 parameters and --outdir, its files then moved into DIR, where the next
-one finds them. With REPO and REVISION, the tar_scm service that fetches
+one finds them. With URL and REVISION, the tar_scm service that fetches
 this repository takes them instead of its url and revision, so that CI
-packs the commit under test. Needs the services installed (obs-service-
+packs the commit under test (tar_scm takes no file:// URL: CI serves the
+checkout with git daemon, git://). Needs the services installed (obs-service-
 tar_scm, -recompress, -set_version, -cargo)."""
 
 import os
@@ -24,7 +25,7 @@ def main(argv):
     if len(argv) not in (3, 5):
         sys.exit(__doc__)
     service_file, outdir = argv[1], os.path.abspath(argv[2])
-    repo, revision = ("file://" + os.path.abspath(argv[3]), argv[4]) if len(argv) == 5 else (None, None)
+    repo, revision = (argv[3], argv[4]) if len(argv) == 5 else (None, None)
     os.makedirs(outdir, exist_ok=True)
     # The package's checkout: _service and the spec, which set_version
     # gives the version of the driver's tarball.

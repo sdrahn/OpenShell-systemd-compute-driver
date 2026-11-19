@@ -97,7 +97,7 @@ jobs:
       - name: Tools
         run: >
           zypper -n --gpg-auto-import-keys in --no-recommends
-          git tar gzip zstd python3 cargo
+          git git-daemon tar gzip zstd python3 cargo
           obs-service-tar_scm obs-service-recompress obs-service-set_version obs-service-cargo
       - uses: actions/checkout@v4
         with:
@@ -105,7 +105,14 @@ jobs:
       - name: The services of _service
         run: |
           git config --global --add safe.directory "$PWD"
-          test/packaging/run-services.py packaging/suse/_service "$RUNNER_TEMP/obs" "$PWD" "$(git rev-parse HEAD)"
+          # tar_scm fetches by URL only, file:// not among them: the
+          # checkout is served on loopback for it, the commit under test
+          # on a branch, so that a clone has it.
+          git branch -f obs-services-head HEAD
+          git config --global uploadpack.allowAnySHA1InWant true
+          git daemon --detach --reuseaddr --export-all --listen=127.0.0.1 --base-path="$(dirname "$PWD")"
+          test/packaging/run-services.py packaging/suse/_service "$RUNNER_TEMP/obs" \
+            "git://127.0.0.1/$(basename "$PWD")" "$(git rev-parse HEAD)"
       - name: The files are what the spec takes
         run: test/packaging/check-sources.sh "$RUNNER_TEMP/obs"
 
