@@ -2,16 +2,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
 # SPDX-License-Identifier: Apache-2.0
 #
-# make-sources: the three source files of the package, into a directory:
+# make-sources: the four source files of the package, into a directory:
 #
 #   openshell-driver-systemd-<version>.tar.gz   this tree, at HEAD
 #   openshell-<release>.tar.gz                  OpenShell's source at the
 #                                               release of tools/openshell-version
-#   vendor.tar.zst                              the crates of both, and the
-#                                               .cargo/config.toml that makes
-#                                               Cargo use them offline
+#   vendor.tar.zst                              the driver's crates
+#   vendor-openshell.tar.zst                    OpenShell's crates
 #
 #   packaging/suse/make-sources <directory>
+#
+# They are the files OBS's services make from _service (osc service
+# manualrun), laid out the same way: each vendor tarball holds Cargo.lock,
+# the .cargo/config.toml that makes Cargo use the crates offline and the
+# vendor directory, for the top of its tree. CI and the Release workflow
+# use this script; a build service project can use either.
 #
 # Needs git, cargo, curl, zstd and the network. The package build itself
 # needs none of the network.
@@ -44,9 +49,26 @@ mkdir "$tree/openshell-${release#v}"
 tar -xzf "$work/openshell.tar.gz" -C "$tree/openshell-${release#v}" --strip-components=1
 tar -czf "$out/openshell-${release#v}.tar.gz" -C "$tree" "openshell-${release#v}"
 
-cd "$tree"
-mkdir -p .cargo
-cargo vendor --locked --versioned-dirs --sync "openshell-${release#v}/Cargo.toml" vendor >.cargo/config.toml
-tar --zstd -cf "$out/vendor.tar.zst" vendor .cargo/config.toml
+# vendor DIR NAME TARBALL: vendor the crates of the workspace in DIR into
+# DIR/NAME and pack them as cargo_vendor does: with Cargo.lock and the
+# tree's .cargo/config.toml, to which the source replacement is added.
+vendor() {
+	local dir=$1 name=$2 tarball=$3
+	(
+		cd "$dir"
+		mkdir -p .cargo
+		touch .cargo/config.toml
+		{
+			cat .cargo/config.toml
+			echo
+			cargo vendor --locked --versioned-dirs "$name"
+		} >"$work/config.toml"
+		mv "$work/config.toml" .cargo/config.toml
+		tar --zstd --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
+			-cf "$tarball" Cargo.lock .cargo/config.toml "$name"
+	)
+}
+vendor "$tree" vendor "$out/vendor.tar.zst"
+vendor "$tree/openshell-${release#v}" vendor-openshell "$out/vendor-openshell.tar.zst"
 cp "$root/packaging/suse/$name.spec" "$out/"
 ls -l "$out"

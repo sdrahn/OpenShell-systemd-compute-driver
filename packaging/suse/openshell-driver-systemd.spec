@@ -21,9 +21,11 @@ License:        Apache-2.0
 URL:            https://github.com/sdrahn/OpenShell-systemd-compute-driver
 Source0:        %{name}-%{version}.tar.gz
 Source1:        openshell-%{openshell_version}.tar.gz
-# cargo vendor --versioned-dirs --sync openshell-%%{openshell_version}/Cargo.toml,
-# with the .cargo/config.toml it prints (packaging/suse/README.md).
+# The crates of each, as OBS's cargo_vendor service makes them (_service,
+# packaging/suse/README.md): Cargo.lock, .cargo/config.toml and the
+# vendor directory, for the top of the tree they belong to.
 Source2:        vendor.tar.zst
+Source3:        vendor-openshell.tar.zst
 BuildRequires:  cargo >= 1.94
 BuildRequires:  clang-devel
 BuildRequires:  cmake
@@ -126,6 +128,7 @@ start without --disposable.
 
 %prep
 %setup -q -a 1 -a 2
+zstd -dc %{SOURCE3} | tar -xf - -C openshell-%{openshell_version}
 # OpenShell's crates from its source tree, not from the vendored copies:
 # their build reads the proto files of the tree, which a vendored crate
 # does not have next to it.
@@ -148,10 +151,12 @@ export PROTOC_INCLUDE=%{_includedir}
 # their entries in the lock file. Every other crate stays as locked, and
 # nothing can be fetched.
 cargo build --release --offline
-# The two stock programs, from the same release.
-cargo build --release --locked --offline \
-    --manifest-path openshell-%{openshell_version}/Cargo.toml \
-    -p openshell-supervisor -p openshell-sandbox
+# The two stock programs, from the same release, with its own crates.
+(
+    cd openshell-%{openshell_version}
+    export CARGO_HOME=$PWD/.cargo
+    cargo build --release --locked --offline -p openshell-supervisor -p openshell-sandbox
+)
 %sysusers_generate_pre packaging/suse/%{name}.sysusers %{name} %{name}.conf
 make -f %{_datadir}/selinux/devel/Makefile -C selinux %{modulename}.pp
 
