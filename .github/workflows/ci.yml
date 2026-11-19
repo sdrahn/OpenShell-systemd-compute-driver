@@ -39,7 +39,7 @@ jobs:
           key: check-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
       - run: make check
 
-  # The packages, built without network from the three source files, in
+  # The packages, built without network from the four source files, in
   # openSUSE Leap 16, as a build service builds them.
   package:
     runs-on: ubuntu-24.04
@@ -69,6 +69,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$PWD"
           packaging/suse/make-sources "$PWD/sources"
+          test/packaging/check-sources.sh "$PWD/sources"
       - name: Build the packages
         run: |
           rpmbuild -ba --define "_sourcedir $PWD/sources" --define "_topdir $PWD/rpmbuild" \
@@ -82,6 +83,31 @@ jobs:
         with:
           name: rpms
           path: rpms/*.rpm
+
+  # The source files as a build service project makes them: OBS's own
+  # services run packaging/suse/_service, as `osc service manualrun`
+  # does, on this commit, and their files are what the spec takes.
+  obs-services:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: registry.opensuse.org/opensuse/tumbleweed:latest
+    env:
+      RUSTUP_TOOLCHAIN: ""
+    steps:
+      - name: Tools
+        run: >
+          zypper -n --gpg-auto-import-keys in --no-recommends
+          git tar gzip zstd python3 cargo
+          obs-service-tar_scm obs-service-recompress obs-service-set_version obs-service-cargo
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The services of _service
+        run: |
+          git config --global --add safe.directory "$PWD"
+          test/packaging/run-services.py packaging/suse/_service "$RUNNER_TEMP/obs" "$PWD" "$(git rev-parse HEAD)"
+      - name: The files are what the spec takes
+        run: test/packaging/check-sources.sh "$RUNNER_TEMP/obs"
 
   # The guide as an agent gets it: the docs package installed, and
   # mcp-docs serving it from the package's collection file.

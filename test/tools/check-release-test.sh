@@ -25,6 +25,17 @@ printf 'Name: openshell-driver-systemd\nVersion:        1.2.0\n' >packaging/suse
 printf '[package]\nname = "openshell-driver-systemd"\nversion = "1.2.0"\n\n[dependencies]\nother = { version = "9.9.9" }\n' >Cargo.toml
 printf '[[package]]\nname = "other"\nversion = "9.9.9"\n\n[[package]]\nname = "openshell-driver-systemd"\nversion = "1.2.0"\n' >Cargo.lock
 printf '# Changelog\n\n## v1.2.0 — 2026-01-02\n\n- A change.\n\n## v1.1.0 — 2025-12-01\n' >CHANGELOG.md
+cat >packaging/suse/_service <<'EOF'
+<services>
+  <service name="tar_scm" mode="manual">
+    <param name="revision">release-1.2</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+  </service>
+  <service name="tar_scm" mode="manual">
+    <param name="revision">0123456789abcdef0123456789abcdef01234567</param>
+  </service>
+</services>
+EOF
 echo "# changes.d" >changes.d/README.md
 git add -A
 git commit -q -m release
@@ -64,6 +75,16 @@ git reset -q --hard HEAD~1
 echo "- Not released yet." >changes.d/topic.fixed.md
 change "a fragment"
 expect 1 'changes.d still has changes.d/topic.fixed.md' "a fragment that is not in the changelog" v1.2.0
+git reset -q --hard HEAD~1
+
+sed -i 's|>release-1.2<|>main<|' packaging/suse/_service
+change "_service on main"
+expect 1 '_service does not build from release-1.2' "_service building from main" v1.2.0
+git reset -q --hard HEAD~1
+
+sed -i 's|>@PARENT_TAG@<|>1.3.0+git%cd.%h<|' packaging/suse/_service
+change "_service with a development version"
+expect 1 'does not take the version from the tag' "_service with a version of its own" v1.2.0
 git reset -q --hard HEAD~1
 
 printf '\0\1\2' >program
