@@ -9,6 +9,36 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.2.0 — 2026-11-19
+
+The driver on a transactional system, as on SLES 16.1. The package
+ships the mount points its sandboxes' units bind to, so the helper
+starts on a read-only root, and the SELinux package requires
+`selinux-policy` by its version only, so a build installs on a host
+with an older release of the same policy. Otherwise 0.2.0 is 0.1.4.
+
+To update: install the packages; on a transactional system in a new
+snapshot (`transactional-update pkg install …`), then reboot into it.
+Mount points made by hand for 0.1.4 (`/.openshell/supervisor`,
+`/.openshell/channel`, `/sandbox`) are taken over by the package. Then
+restart the helper (`systemctl restart openshell-systemd-helper.service`)
+and the driver as the gateway's user (`systemctl --user restart
+openshell-driver-systemd.service`); sandboxes that run are not touched.
+
+### Fixed
+
+- The driver's helper starts on a transactional system (SLES 16 or
+  Leap 16 in immutable mode). The package ships the sandboxes' mount
+  points `/.openshell/supervisor`, `/.openshell/channel` and `/sandbox`.
+  Before, the helper made them each time it started, and on a read-only
+  root it exited with `Read-only file system (os error 30)`. A mount
+  point that is still missing is named in the helper's error.
+- `openshell-driver-systemd-selinux` requires `selinux-policy` by its
+  version only. Before, it required the release of the build's
+  `selinux-policy` too, so a build for SLES 16.1 (Package Hub) could
+  not be installed on a host with an older release of the same policy
+  version ("nothing provides 'selinux-policy >= …'").
+
 ## v0.1.4 — 2026-11-18
 
 A fix release: creating or starting a sandbox no longer fails now and
