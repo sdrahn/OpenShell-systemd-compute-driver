@@ -26,8 +26,8 @@
   <service name="tar_scm" mode="manual">
     <param name="url">https://github.com/NVIDIA/OpenShell.git</param>
     <param name="scm">git</param>
-    <param name="revision">f3d976590d3eb1379690a2abaf0f0e26c21d487d</param>
-    <param name="version">0.1.8</param>
+    <param name="revision">ce58cf8e9b953281352d98a637e41616295b1318</param>
+    <param name="version">0.1.9</param>
     <param name="filename">openshell</param>
     <param name="exclude">.git</param>
   </service>
@@ -45,7 +45,7 @@
     <param name="compression">zst</param>
   </service>
   <service name="cargo_vendor" mode="manual">
-    <param name="src">openshell-0.1.8.tar.gz</param>
+    <param name="src">openshell-0.1.9.tar.gz</param>
     <param name="tag">openshell</param>
     <param name="update">false</param>
     <param name="respect-lockfile">true</param>

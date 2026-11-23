@@ -613,7 +613,7 @@ mod tests {
         );
     }
 
-    /// The reasons the gateway of `OpenShell` 0.1.8 (`is_terminal_failure_reason`)
+    /// The reasons the gateway of `OpenShell` 0.1.8 and 0.1.9 (`is_terminal_failure_reason`)
     /// takes for a sandbox that is still coming up; every other reason of a
     /// `Ready=False` condition puts the sandbox in the error phase.
     const GATEWAY_TRANSIENT_REASONS: [&str; 8] = [
