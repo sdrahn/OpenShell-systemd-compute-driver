@@ -9,7 +9,7 @@
 # openshell-supervisor and openshell-sandbox from the same source, so the
 # three always match (tools/openshell-version keeps this line, Cargo.toml
 # and the tests in step).
-%define openshell_version 0.1.8
+%define openshell_version 0.1.9
 %define selinuxtype targeted
 %define modulename openshell_systemd
 

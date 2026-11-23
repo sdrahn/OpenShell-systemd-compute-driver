@@ -129,7 +129,8 @@ sandboxes that run.
 OpenShell's own setting for this, `additional_ca_bundle` in
 `[openshell.supervisor.network]` of `gateway.toml`, is for its
 container drivers. With an external compute driver such as this one
-OpenShell 0.1.8 refuses the setting, and the gateway does not start.
+OpenShell (0.1.8 and 0.1.9) refuses the setting, and the gateway does
+not start.
 
 ## Who decides what {#who}
 
