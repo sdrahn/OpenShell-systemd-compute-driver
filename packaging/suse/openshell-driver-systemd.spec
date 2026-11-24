@@ -14,7 +14,7 @@
 %define modulename openshell_systemd
 
 Name:           openshell-driver-systemd
-Version:        0.3.0
+Version:        0.4.0
 Release:        0
 Summary:        OpenShell compute driver that runs sandboxes as systemd units
 License:        Apache-2.0
