@@ -9,9 +9,16 @@ one finds them. With URL and REVISION, the tar_scm service that fetches
 this repository takes them instead of its url and revision, so that CI
 packs the commit under test (tar_scm takes no file:// URL: CI serves the
 checkout with git daemon, git://). Needs the services installed (obs-service-
-tar_scm, -recompress, -set_version, -cargo)."""
+tar_scm, -recompress, -set_version, -cargo).
+
+A release branch's _service takes the version from the branch's latest
+tag (@PARENT_TAG@). Before a new release's first tag, the commit under
+test has none: then, with URL and REVISION, the version is the spec's,
+the one that tag will give (tools/check-release checks they agree).
+Run it from this repository's checkout."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +26,21 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 THIS_REPO = "OpenShell-systemd-compute-driver"
+
+
+def spec_version(here):
+    for f in os.listdir(here):
+        if f.endswith(".spec"):
+            with open(os.path.join(here, f)) as spec:
+                m = re.search(r"^Version:\s*(\S+)", spec.read(), re.M)
+                if m:
+                    return m.group(1)
+    sys.exit(f"no Version: in a spec in {here}")
+
+
+def has_parent_tag(revision):
+    return subprocess.run(["git", "describe", "--tags", "--abbrev=0", revision],
+                          capture_output=True).returncode == 0
 
 
 def main(argv):
@@ -38,6 +60,11 @@ def main(argv):
         params = [(p.get("name"), (p.text or "").strip()) for p in service.findall("param")]
         if repo and name == "tar_scm" and any(k == "url" and THIS_REPO in v for k, v in params):
             params = [(k, repo if k == "url" else revision if k == "revision" else v) for k, v in params]
+            if ("versionformat", "@PARENT_TAG@") in params and not has_parent_tag(revision):
+                version = spec_version(here)
+                print(f"{revision} has no tag yet: the version is the spec's, {version}", flush=True)
+                params = [(k, version if k == "versionformat" else v)
+                          for k, v in params if k != "versionrewrite-pattern"]
         with tempfile.TemporaryDirectory(dir=os.path.dirname(outdir)) as tmp:
             cmd = [f"/usr/lib/obs/service/{name}"]
             for k, v in params:
