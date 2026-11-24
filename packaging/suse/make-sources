@@ -2,18 +2,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Daniel Rahn
 # SPDX-License-Identifier: Apache-2.0
 #
-# make-sources: the four source files of the package, into a directory:
+# make-sources: the three source files of the package, into a directory:
 #
 #   openshell-driver-systemd-<version>.tar.gz   this tree, at HEAD
 #   openshell-<release>.tar.gz                  OpenShell's source at the
 #                                               release of tools/openshell-version
 #   vendor.tar.zst                              the driver's crates
-#   vendor-openshell.tar.zst                    OpenShell's crates
 #
 #   packaging/suse/make-sources <directory>
 #
 # They are the files OBS's services make from _service (osc service
-# manualrun), laid out the same way: each vendor tarball holds Cargo.lock,
+# manualrun), laid out the same way: the vendor tarball holds Cargo.lock,
 # the .cargo/config.toml that makes Cargo use the crates offline and the
 # vendor directory, for the top of its tree. CI and the Release workflow
 # use this script; a build service project can use either.
@@ -69,6 +68,5 @@ vendor() {
 	)
 }
 vendor "$tree" vendor "$out/vendor.tar.zst"
-vendor "$tree/openshell-${release#v}" vendor-openshell "$out/vendor-openshell.tar.zst"
 cp "$root/packaging/suse/$name.spec" "$out/"
 ls -l "$out"

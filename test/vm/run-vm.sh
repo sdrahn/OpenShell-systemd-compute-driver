@@ -10,9 +10,12 @@
 #
 #   test/vm/run-vm.sh <rpm dir>
 #
-# Needs qemu-system-x86, qemu-utils, cloud-image-utils and /dev/kvm.
+# Needs qemu-system-x86, qemu-utils, cloud-image-utils, curl and /dev/kvm.
 # WORK: the working directory (kept; the image is cached there).
 # TEST_ARGS: further arguments for run-tests.sh (--selinux-discovery).
+# OPENSHELL_PROJECT: the OBS project with openshell-supervisor and
+# openshell-sandbox (home:sdrahn:testing); OPENSHELL_REPO: a repository
+# URL instead.
 # The results come back as $WORK/results.
 set -euo pipefail
 
@@ -139,13 +142,32 @@ if [ "$(vm 'getenforce 2>/dev/null || echo Missing')" != Enforcing ]; then
 	done
 fi
 
+# openshell-supervisor and openshell-sandbox, which the driver requires,
+# are not in Leap's own repositories: they come from an OBS project
+# (OPENSHELL_PROJECT), from its repository named after the VM's release
+# (16.0). Or set OPENSHELL_REPO to a repository's URL.
+project=${OPENSHELL_PROJECT:-home:sdrahn:testing}
+if [ -z "${OPENSHELL_REPO:-}" ]; then
+	base="https://download.opensuse.org/repositories/${project//:/:\/}"
+	release=$(vm '. /etc/os-release && echo "$VERSION_ID"')
+	OPENSHELL_REPO=$base/$release/
+	if ! curl -fsSL -m 60 --retry 3 -o /dev/null "${OPENSHELL_REPO}repodata/repomd.xml"; then
+		log "no repository $release in $project; the project has:"
+		curl -fsSL -m 60 "$base/" | grep -o 'href="[^"?/][^"]*/"' | sed 's/href="//; s/"$//' >&2 || true
+		exit 1
+	fi
+fi
+log "OpenShell's packages from $OPENSHELL_REPO"
+vm "zypper -n ar -f -p 105 '$OPENSHELL_REPO' openshell-packages && zypper -n --gpg-auto-import-keys ref openshell-packages" >"$work/repo.log" 2>&1 ||
+	{ tail -n 20 "$work/repo.log"; log "adding $OPENSHELL_REPO failed"; exit 1; }
+
 log "installing the packages"
 vm 'rm -rf /root/driver-vm && mkdir -p /root/driver-vm/rpms'
 scp_opts=(-q -i "$work/key" -P "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 scp "${scp_opts[@]}" "$rpms"/*.rpm root@127.0.0.1:/root/driver-vm/rpms/
 # The tests come from their package, as on a test system.
 tests=/usr/libexec/openshell-driver-systemd/tests
-vm 'zypper -n --no-gpg-checks in --no-recommends /root/driver-vm/rpms/*.rpm' >"$work/install.log" 2>&1 ||
+vm 'zypper -n --no-gpg-checks --gpg-auto-import-keys in --no-recommends /root/driver-vm/rpms/*.rpm' >"$work/install.log" 2>&1 ||
 	{ tail -n 40 "$work/install.log"; log "installing the packages failed"; exit 1; }
 
 vm "$tests/openshell-setup.sh" 2>&1 | tee "$work/openshell-setup.log"

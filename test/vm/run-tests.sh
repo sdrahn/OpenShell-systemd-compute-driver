@@ -162,9 +162,16 @@ check "it requires selinux-policy by version only, not the build's release" bash
 check "the package ships the sandboxes' mount points" rpm -qf /.openshell/supervisor /.openshell/channel /sandbox
 for f in /usr/bin/openshell-driver-systemd /usr/libexec/openshell/openshell-systemd-helper \
 	/usr/libexec/openshell/openshell-supervisor-fence \
-	/usr/libexec/openshell/openshell-supervisor /usr/libexec/openshell/openshell-sandbox; do
+	/usr/bin/openshell-supervisor /usr/bin/openshell-sandbox; do
 	check "$f is installed" test -x "$f"
 done
+# The stock programs come with OpenShell's packages, of the release the
+# driver is built against, not with the driver's.
+v=$(head -n1 "$(dirname "$0")/openshell-version")
+for p in openshell-supervisor openshell-sandbox; do
+	check "/usr/bin/$p is of the package $p ${v#v}" sh -c "[ \"\$(rpm -qf --qf '%{NAME} %{VERSION}' /usr/bin/$p)\" = '$p ${v#v}' ]"
+done
+refuse "the driver's package ships no supervisor or sandbox of its own" sh -c "rpm -ql openshell-driver-systemd | grep -E '/openshell-(supervisor|sandbox)\$'"
 check "the driver names its version" sh -c '/usr/bin/openshell-driver-systemd --version | grep -E "[0-9]+\.[0-9]+\.[0-9]+"'
 check "the user the unit templates name exists and is not root" sh -c 'u=$(id -u openshell-sandbox) && [ "$u" != 0 ]'
 check "the unit templates are valid" systemd-analyze verify \
@@ -174,8 +181,8 @@ check "the unit templates are valid" systemd-analyze verify \
 	/usr/lib/systemd/system/openshell-sandbox-workload@.service
 check "SELinux is enforcing" sh -c '[ "$(getenforce)" = Enforcing ]'
 check "the policy module is loaded" sh -c 'semodule -l | grep -qx openshell_systemd'
-check "openshell-supervisor has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-supervisor | grep -q openshell_supervisor_exec_t'
-check "openshell-sandbox has its label" sh -c 'ls -Z /usr/libexec/openshell/openshell-sandbox | grep -q openshell_sandbox_exec_t'
+check "openshell-supervisor has its label" sh -c 'ls -Z /usr/bin/openshell-supervisor | grep -q openshell_supervisor_exec_t'
+check "openshell-sandbox has its label" sh -c 'ls -Z /usr/bin/openshell-sandbox | grep -q openshell_sandbox_exec_t'
 # The guide, where its package is installed.
 guide=/usr/share/openshell-driver-systemd/docs
 if rpm -q openshell-driver-systemd-docs >/dev/null 2>&1; then
@@ -321,7 +328,7 @@ check "in the namespace unit's domain, a network setting is read" in_netns_domai
 refuse "in the namespace unit's domain, root cannot read the users' file" in_netns_domain /usr/bin/test -r /etc/passwd
 refuse "in the namespace unit's domain, root cannot write in /etc" in_netns_domain /usr/bin/touch /etc/driver-test-netns
 check "the three units are active" systemctl is-active "openshell-sandbox-netns@$id.service" "openshell-sandbox-supervisor@$id.service" "openshell-sandbox-workload@$id.service"
-check "the supervisor is the stock program, started by its launcher" sh -c "[ \"\$(readlink /proc/$sup/exe)\" = /usr/libexec/openshell/openshell-supervisor ] && systemctl show openshell-sandbox-supervisor@$id.service -p ExecStart --value | grep -q openshell-supervisor-fence"
+check "the supervisor is the stock program, started by its launcher" sh -c "[ \"\$(readlink /proc/$sup/exe)\" = /usr/bin/openshell-supervisor ] && systemctl show openshell-sandbox-supervisor@$id.service -p ExecStart --value | grep -q openshell-supervisor-fence"
 check "the supervisor cannot gain privileges" sh -c "grep -qx 'NoNewPrivs:[[:space:]]*1' /proc/$sup/status"
 check "the supervisor's unit holds no sandbox's files but through its own mounts" sh -c "[ -z \"\$(nsenter -t $sup -m ls /var/lib/openshell)\" ]"
 check "the supervisor's unit holds its own runtime directory alone" sh -c "[ \"\$(nsenter -t $sup -m ls /run/openshell-sandbox)\" = $id ]"

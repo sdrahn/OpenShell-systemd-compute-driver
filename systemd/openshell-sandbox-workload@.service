@@ -24,7 +24,7 @@ User=openshell-sandbox
 Group=openshell-sandbox
 Environment=HOME=/sandbox
 WorkingDirectory=/
-ExecStart=/usr/libexec/openshell/openshell-sandbox --bootstrap /.openshell/channel/sandbox/bootstrap.json
+ExecStart=/usr/bin/openshell-sandbox --bootstrap /.openshell/channel/sandbox/bootstrap.json
 PrivateNetwork=yes
 # The workload has a process ID namespace of its own: it sees neither the
 # host's processes nor another sandbox's, and its supervisor, which is

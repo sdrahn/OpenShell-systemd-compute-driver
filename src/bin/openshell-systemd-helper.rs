@@ -493,7 +493,7 @@ fn policy_module_in_use() -> std::result::Result<bool, String> {
         return Ok(false);
     }
     let output = std::process::Command::new(STAT)
-        .args(["-c", "%C", "/usr/libexec/openshell/openshell-sandbox"])
+        .args(["-c", "%C", "/usr/bin/openshell-sandbox"])
         .output()
         .map_err(|error| format!("{STAT}: {error}"))?;
     if !output.status.success() {

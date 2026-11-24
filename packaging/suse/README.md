@@ -3,10 +3,12 @@
 `openshell-driver-systemd.spec` builds four packages:
 
 - `openshell-driver-systemd`: the driver, its helper, the unit
-  templates, the user `openshell-sandbox`, and `openshell-supervisor`
-  and `openshell-sandbox` of the OpenShell release the driver is built
-  against. OpenShell's own package does not install those two on a
-  host: with its other drivers they come inside container images.
+  templates and the user `openshell-sandbox`. It requires the packages
+  `openshell-supervisor` and `openshell-sandbox` of the OpenShell
+  release the driver is built against (`/usr/bin/openshell-supervisor`
+  and `/usr/bin/openshell-sandbox`), which the sandboxes run. The
+  functional tests take them from the OBS project `home:sdrahn:testing`
+  (`test/vm/run-vm.sh`).
 - `openshell-driver-systemd-selinux`: the policy module. It is
   installed with the first where SELinux's targeted policy is.
 - `openshell-driver-systemd-docs`: the guide (`docs/user-guide`) and
@@ -20,7 +22,7 @@
 
 ## Sources
 
-The build needs no network. Its four source files come from OBS's
+The build needs no network. Its three source files come from OBS's
 source services (`_service`) or from `make-sources`, the same files laid
 out the same way:
 
@@ -29,7 +31,6 @@ out the same way:
 | `openshell-driver-systemd-<version>.tar.gz` | this repository |
 | `openshell-<release>.tar.gz` | OpenShell's source at the release `tools/openshell-version` prints, at the commit `Cargo.lock` locks |
 | `vendor.tar.zst` | the driver's crates: `Cargo.lock`, `.cargo/config.toml` and `vendor/` |
-| `vendor-openshell.tar.zst` | OpenShell's crates, for its tree: `Cargo.lock`, `.cargo/config.toml` and `vendor-openshell/` |
 
 The crates are vendored as `Cargo.lock` locks them, never updated in
 passing. A new crate version is a change here, in `Cargo.lock`.
@@ -60,7 +61,7 @@ crate, not in the project.
 
 ### With make-sources
 
-`make-sources <directory>` writes the same four files and the spec, from
+`make-sources <directory>` writes the same three files and the spec, from
 the commit checked out. Then, in that directory: `rpmbuild -ba
 openshell-driver-systemd.spec` with `_sourcedir` set to it, or `osc
 build`. CI does the first in a Leap 16 container, and the functional
@@ -127,7 +128,9 @@ Or it takes the files the release published, as they are.
 
 ## A new OpenShell release
 
-`tools/openshell-version vX.Y.Z`, then `cargo update -p openshell-core`
+The packages `openshell-supervisor` and `openshell-sandbox` of that
+release have to be in the repositories first: the driver requires them
+at the same version. Then `tools/openshell-version vX.Y.Z`, then `cargo update -p openshell-core`
 (and the other three crates), `tools/openshell-version vX.Y.Z` again
 (it gives `_service` the commit `Cargo.lock` now locks), `make check`,
 and the functional tests.
@@ -136,8 +139,5 @@ so a new release can need changes here.
 
 ## Not decided yet
 
-- The supervisor is built with OpenShell's default features, which
-  include its telemetry and its bundled CA roots. A distribution may
-  prefer `--no-default-features --features system-ca-roots`.
 - Where the gateway's CA certificate is on a packaged gateway, so that
   the driver's user unit can name it without a drop-in.

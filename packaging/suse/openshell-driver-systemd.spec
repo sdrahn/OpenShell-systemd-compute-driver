@@ -5,10 +5,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-# The OpenShell release the driver is built against. The package builds
-# openshell-supervisor and openshell-sandbox from the same source, so the
-# three always match (tools/openshell-version keeps this line, Cargo.toml
-# and the tests in step).
+# The OpenShell release the driver is built against. The sandboxes run
+# openshell-supervisor and openshell-sandbox of the same release, from
+# their own packages (tools/openshell-version keeps this line, Cargo.toml,
+# _service and the tests in step).
 %define openshell_version 0.1.9
 %define selinuxtype targeted
 %define modulename openshell_systemd
@@ -21,11 +21,11 @@ License:        Apache-2.0
 URL:            https://github.com/sdrahn/OpenShell-systemd-compute-driver
 Source0:        %{name}-%{version}.tar.gz
 Source1:        openshell-%{openshell_version}.tar.gz
-# The crates of each, as OBS's cargo_vendor service makes them (_service,
-# packaging/suse/README.md): Cargo.lock, .cargo/config.toml and the
-# vendor directory, for the top of the tree they belong to.
+# The driver's crates, as OBS's cargo_vendor service makes them
+# (_service, packaging/suse/README.md): Cargo.lock, .cargo/config.toml and
+# the vendor directory. OpenShell's source is for its crates the driver
+# uses, which are built from that tree.
 Source2:        vendor.tar.zst
-Source3:        vendor-openshell.tar.zst
 BuildRequires:  cargo >= 1.94
 BuildRequires:  clang-devel
 BuildRequires:  cmake
@@ -42,6 +42,10 @@ BuildRequires:  sysuser-tools
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  zstd
 Requires:       systemd >= 257
+# The stock programs a sandbox runs, of the release the driver is built
+# against: the supervisor speaks the gateway's protocol of that release.
+Requires:       openshell-sandbox = %{openshell_version}
+Requires:       openshell-supervisor = %{openshell_version}
 Requires:       (%{name}-selinux if selinux-policy-%{selinuxtype})
 ExclusiveArch:  x86_64 aarch64
 %sysusers_requires
@@ -55,9 +59,9 @@ stock openshell-sandbox in a network namespace with loopback only, both
 as an unprivileged user of the sandbox's own. The workload uses the host's file system
 read-only.
 
-The package holds the driver, its privileged helper, the unit templates,
-and openshell-supervisor and openshell-sandbox of OpenShell
-%{openshell_version}.
+The package holds the driver, its privileged helper and the unit
+templates. openshell-supervisor and openshell-sandbox of OpenShell
+%{openshell_version} come with their own packages.
 
 %package selinux
 Summary:        SELinux policy module for openshell-driver-systemd
@@ -128,7 +132,6 @@ start without --disposable.
 
 %prep
 %setup -q -a 1 -a 2
-zstd -dc %{SOURCE3} | tar -xf - -C openshell-%{openshell_version}
 # OpenShell's crates from its source tree, not from the vendored copies:
 # their build reads the proto files of the tree, which a vendored crate
 # does not have next to it.
@@ -151,12 +154,6 @@ export PROTOC_INCLUDE=%{_includedir}
 # their entries in the lock file. Every other crate stays as locked, and
 # nothing can be fetched.
 cargo build --release --offline
-# The two stock programs, from the same release, with its own crates.
-(
-    cd openshell-%{openshell_version}
-    export CARGO_HOME=$PWD/.cargo
-    cargo build --release --locked --offline -p openshell-supervisor -p openshell-sandbox
-)
 %sysusers_generate_pre packaging/suse/%{name}.sysusers %{name} %{name}.conf
 make -f %{_datadir}/selinux/devel/Makefile -C selinux %{modulename}.pp
 
@@ -167,13 +164,13 @@ export PROTOC_INCLUDE=%{_includedir}
 cargo test --release --offline
 
 %install
-# The unit templates name the programs by these paths.
+# The unit templates name the programs by these paths (and
+# openshell-supervisor and openshell-sandbox by %{_bindir}, where their
+# packages put them).
 test "%{_libexecdir}" = /usr/libexec
 install -D -m 0755 target/release/openshell-driver-systemd %{buildroot}%{_bindir}/openshell-driver-systemd
 install -D -m 0755 target/release/openshell-systemd-helper %{buildroot}%{_libexecdir}/openshell/openshell-systemd-helper
 install -D -m 0755 target/release/openshell-supervisor-fence %{buildroot}%{_libexecdir}/openshell/openshell-supervisor-fence
-install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-supervisor %{buildroot}%{_libexecdir}/openshell/openshell-supervisor
-install -D -m 0755 openshell-%{openshell_version}/target/release/openshell-sandbox %{buildroot}%{_libexecdir}/openshell/openshell-sandbox
 install -d %{buildroot}%{_unitdir} %{buildroot}%{_userunitdir}
 # The mount points the sandbox units bind to (the paths the stock
 # supervisor and openshell-sandbox use in a container). The package makes
@@ -232,9 +229,7 @@ fi
 %{_bindir}/openshell-driver-systemd
 %dir %{_libexecdir}/openshell
 %{_libexecdir}/openshell/openshell-systemd-helper
-%{_libexecdir}/openshell/openshell-supervisor
 %{_libexecdir}/openshell/openshell-supervisor-fence
-%{_libexecdir}/openshell/openshell-sandbox
 %{_unitdir}/openshell-systemd-helper.service
 %{_unitdir}/openshell-sandbox-netns@.service
 %{_unitdir}/openshell-sandbox-supervisor@.service

@@ -85,8 +85,8 @@ SELinux denials and the journals.
 
 Schedule it after the system is installed and registered, with:
 
-- the repositories that hold `openshell`, `openshell-gateway` and the
-  driver's packages;
+- the repositories that hold `openshell`, `openshell-gateway`,
+  `openshell-supervisor`, `openshell-sandbox` and the driver's packages;
 - KVM is not needed: the sandboxes are systemd units;
 - `OPENSHELL_DRIVER_SYSTEMD_OFFLINE=1` where the worker has no way to the
   Internet;
@@ -104,7 +104,9 @@ schedule:
 ## What has and has not been run
 
 This repository's CI runs `run-tests.sh` from the installed package on
-every pull request, in a Leap 16 VM, with OpenShell from its own installer.
+every pull request, in a Leap 16 VM, with OpenShell's gateway from its own
+installer and `openshell-supervisor` and `openshell-sandbox` from the OBS
+project `home:sdrahn:testing` (`test/vm/run-vm.sh`).
 Not run there: the test module itself (there is no openQA instance in CI),
 `openshell-setup.sh --from-repositories` (CI has no repository with
 OpenShell's packages), and `--offline`.

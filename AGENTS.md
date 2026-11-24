@@ -88,9 +88,9 @@ of rules.
 - The OpenShell release the driver is built against is named in
   `Cargo.toml`, in the spec and in `test/vm/openshell-version`.
   `tools/openshell-version` checks that they agree and changes them
-  together. The package builds `openshell-supervisor` and
-  `openshell-sandbox` from that release; nothing of OpenShell is copied
-  into this repository.
+  together. The package requires the packages `openshell-supervisor`
+  and `openshell-sandbox` of that release; nothing of OpenShell is
+  copied into this repository.
 - This is an external driver. It works with a stock OpenShell gateway
   and knows of no other project: no code or documentation here depends
   on what runs inside a sandbox or on what the gateway is used for.
