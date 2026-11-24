@@ -9,6 +9,51 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.3.0 — 2026-11-24
+
+The driver on OpenShell 0.1.9, with OpenShell's own packages. The
+sandboxes run `openshell-supervisor` and `openshell-sandbox` from the
+packages of those names, in `/usr/bin`, where 0.2.0 built and shipped
+copies of its own in `/usr/libexec/openshell`. The package's sources
+can be made with OBS's source services.
+
+To update: the repository that holds the driver has to hold
+`openshell-supervisor` and `openshell-sandbox` of OpenShell 0.1.9, and
+the gateway has to be 0.1.9 too. Install the packages; on a
+transactional system in a new snapshot (`transactional-update pkg
+install …`), then reboot into it. The driver's old copies in
+`/usr/libexec/openshell` go with the old package. Then restart the
+helper (`systemctl restart openshell-systemd-helper.service`), the
+gateway and the driver as the gateway's user (`systemctl --user restart
+openshell-gateway.service openshell-driver-systemd.service`). A sandbox
+that runs keeps the programs it started with until it is restarted.
+
+### Changed
+
+- The package's sources can be made in a build service project with
+  `osc service manualrun`, as Custos's and mcp-gateway's: `_service`
+  fetches the driver and OpenShell's source at the locked commit, and
+  vendors the driver's crates as `Cargo.lock` locks them
+  (`vendor.tar.zst`). `make-sources` and each release make the same
+  three files.
+- Built against OpenShell 0.1.9, where it was 0.1.8: the driver's
+  crates come from that release, the package requires its
+  `openshell-supervisor` and `openshell-sandbox`, and the tests run its
+  gateway. Run it with an OpenShell gateway of 0.1.9. The driver's
+  protocol with the gateway is unchanged.
+- The package no longer builds and ships `openshell-supervisor` and
+  `openshell-sandbox` in `/usr/libexec/openshell`: it requires the
+  packages `openshell-supervisor` and `openshell-sandbox` of the
+  OpenShell release it is built against, and the sandboxes run
+  `/usr/bin/openshell-supervisor` and `/usr/bin/openshell-sandbox`,
+  which the policy module labels. The repository that holds the driver
+  has to hold those packages too.
+
+### Security
+
+- The `url` crate is at 2.5.9, where it was 2.5.8, which overflows the
+  stack on nested `blob:` URLs (RUSTSEC-2026-0592).
+
 ## v0.2.0 — 2026-11-19
 
 The driver on a transactional system, as on SLES 16.1. The package
