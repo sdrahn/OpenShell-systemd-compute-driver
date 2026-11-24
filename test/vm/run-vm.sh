@@ -144,20 +144,15 @@ fi
 
 # openshell-supervisor and openshell-sandbox, which the driver requires,
 # are not in Leap's own repositories: they come from an OBS project
-# (OPENSHELL_PROJECT), from its repository for the VM's release. Or set
-# OPENSHELL_REPO to a repository's URL.
+# (OPENSHELL_PROJECT), from its repository named after the VM's release
+# (16.0). Or set OPENSHELL_REPO to a repository's URL.
 project=${OPENSHELL_PROJECT:-home:sdrahn:testing}
 if [ -z "${OPENSHELL_REPO:-}" ]; then
 	base="https://download.opensuse.org/repositories/${project//:/:\/}"
 	release=$(vm '. /etc/os-release && echo "$VERSION_ID"')
-	for name in "$release" "openSUSE_Leap_$release" "Leap_$release"; do
-		if curl -fsSL -m 60 --retry 3 -o /dev/null "$base/$name/repodata/repomd.xml"; then
-			OPENSHELL_REPO=$base/$name/
-			break
-		fi
-	done
-	if [ -z "${OPENSHELL_REPO:-}" ]; then
-		log "no repository of $project for Leap $release; the project has:"
+	OPENSHELL_REPO=$base/$release/
+	if ! curl -fsSL -m 60 --retry 3 -o /dev/null "${OPENSHELL_REPO}repodata/repomd.xml"; then
+		log "no repository $release in $project; the project has:"
 		curl -fsSL -m 60 "$base/" | grep -o 'href="[^"?/][^"]*/"' | sed 's/href="//; s/"$//' >&2 || true
 		exit 1
 	fi
