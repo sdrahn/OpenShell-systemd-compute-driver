@@ -37,7 +37,7 @@ The tools a workload is to use are simply installed on the host
 
 | Package | Holds |
 |---|---|
-| `openshell-driver-systemd` | the driver, the helper, the supervisor's launcher, the unit templates, the user `openshell-sandbox`, and `openshell-supervisor` and `openshell-sandbox` of the OpenShell release it was built against |
+| `openshell-driver-systemd` | the driver, the helper, the supervisor's launcher, the unit templates and the user `openshell-sandbox`; it requires the packages `openshell-supervisor` and `openshell-sandbox` of the OpenShell release it was built against |
 | `openshell-driver-systemd-selinux` | the policy module `openshell_systemd`; installed with the first where `selinux-policy-targeted` is installed |
 | `openshell-driver-systemd-docs` | this guide in Markdown, in `/usr/share/openshell-driver-systemd/docs`, with a collection file for mcp-docs; installed with the first where `mcp-docs` is installed |
 | `openshell-driver-systemd-tests` | the functional tests, for a test system ([chapter 10](10-tested.md#run)); not for a production host |
@@ -46,9 +46,10 @@ The tools a workload is to use are simply installed on the host
 zypper install openshell-driver-systemd
 ```
 
-The package brings the two stock programs itself because an OpenShell
-package does not install them on a host: the container drivers take
-them from an image.
+This also installs the packages `openshell-supervisor` and
+`openshell-sandbox` (`/usr/bin`), the stock programs a sandbox runs, at
+the OpenShell release the driver was built against. The repository that
+holds the driver has to hold them too.
 
 Installing creates the user `openshell-sandbox` (the one the unit
 templates name; sandboxes run as users of their own), the state directory
@@ -153,7 +154,7 @@ With SELinux, also:
 
 ```shell
 semodule -l | grep -x openshell_systemd
-ls -Z /usr/libexec/openshell/openshell-sandbox              # …:openshell_sandbox_exec_t:…
+ls -Z /usr/bin/openshell-sandbox                            # …:openshell_sandbox_exec_t:…
 ```
 
 If one of these fails, see [chapter 7](07-troubleshooting.md).
@@ -206,11 +207,12 @@ programs come from an OpenShell build of the same release.
 | What | Where |
 |---|---|
 | `openshell-driver-systemd` | `/usr/bin` |
-| `openshell-systemd-helper`, `openshell-supervisor-fence`, `openshell-supervisor`, `openshell-sandbox` | `/usr/libexec/openshell/` |
+| `openshell-systemd-helper`, `openshell-supervisor-fence` | `/usr/libexec/openshell/` |
+| `openshell-supervisor`, `openshell-sandbox` | `/usr/bin/` |
 | `systemd/*.service` | `/usr/lib/systemd/system/` |
 | `systemd/user/*.service` | `/usr/lib/systemd/user/` |
 | `systemd/tmpfiles.d/*.conf` | `/usr/lib/tmpfiles.d/`, then `systemd-tmpfiles --create` |
 | the user | `useradd --system --user-group openshell-sandbox` |
-| the policy module | `make selinux`, `semodule -i selinux/openshell_systemd.pp`, `restorecon -R /usr/libexec/openshell /usr/lib/systemd/system /var/lib/openshell /.openshell /sandbox` |
+| the policy module | `make selinux`, `semodule -i selinux/openshell_systemd.pp`, `restorecon -R /usr/libexec/openshell /usr/bin/openshell-supervisor /usr/bin/openshell-sandbox /usr/lib/systemd/system /var/lib/openshell /.openshell /sandbox` |
 
 The paths are fixed: the unit templates and the policy name them.

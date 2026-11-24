@@ -1,13 +1,12 @@
 <!--
   OBS source services for openshell-driver-systemd. Run them locally with
     osc service manualrun
-  to refresh the package's four source files (OBS builds have no network
+  to refresh the package's three source files (OBS builds have no network
   access), then commit them:
     openshell-driver-systemd-<version>.tar.gz   this repository
     openshell-<release>.tar.gz                  OpenShell's source, at the
                                                 commit Cargo.lock locks
     vendor.tar.zst                              the driver's crates
-    vendor-openshell.tar.zst                    OpenShell's crates
   The crates are vendored as Cargo.lock locks them (no update). Delete
   the files of the previous run first: cargo_vendor takes the first
   tarball that matches. tools/openshell-version keeps OpenShell's
@@ -40,13 +39,6 @@
   </service>
   <service name="cargo_vendor" mode="manual">
     <param name="src">openshell-driver-systemd-*.tar.gz</param>
-    <param name="update">false</param>
-    <param name="respect-lockfile">true</param>
-    <param name="compression">zst</param>
-  </service>
-  <service name="cargo_vendor" mode="manual">
-    <param name="src">openshell-0.1.9.tar.gz</param>
-    <param name="tag">openshell</param>
     <param name="update">false</param>
     <param name="respect-lockfile">true</param>
     <param name="compression">zst</param>

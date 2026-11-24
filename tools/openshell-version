@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The OpenShell release this driver is built against is named in three
-# places: Cargo.toml (the crates), packaging/suse (the source the package
-# builds openshell-supervisor and openshell-sandbox from: the spec, and
-# _service with the commit Cargo.lock locks) and test/vm/openshell-version
-# (the gateway the tests run). They must agree.
+# places: Cargo.toml (the crates), packaging/suse (the spec, with the
+# OpenShell source and the openshell-supervisor and openshell-sandbox
+# packages it requires, and _service with the commit Cargo.lock locks)
+# and test/vm/openshell-version (the gateway the tests run). They must agree.
 #   tools/openshell-version          print it, or fail where they differ
 #   tools/openshell-version vX.Y.Z   set it everywhere (then: cargo update,
 #                                    and this again for _service's commit)
@@ -21,8 +21,7 @@ if [ $# = 1 ]; then
 	[[ $new =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $new" >&2; exit 2; }
 	sed -i -E "s|(git = \"https://github.com/NVIDIA/OpenShell\", tag = \")v[^\"]+|\1$new|" Cargo.toml
 	sed -i -E "s|^(%define openshell_version +).*|\1${new#v}|" "$spec"
-	sed -i -E -e "s|(<param name=\"version\">)[^<]*|\1${new#v}|" \
-		-e "s|(<param name=\"src\">openshell-)[0-9][^<]*(\.tar\.gz)|\1${new#v}\2|" "$service"
+	sed -i -E "s|(<param name=\"version\">)[^<]*|\1${new#v}|" "$service"
 	commit=$(locked "$new")
 	if [ -n "$commit" ]; then
 		sed -i -E "/OpenShell\.git/,/<\/service>/ s|(<param name=\"revision\">)[^<]*|\1$commit|" "$service"
@@ -36,14 +35,13 @@ if [ "$(echo "$cargo" | wc -l)" != 1 ] || [ "$cargo" != "$spec_v" ] || [ "$cargo
 	echo "the OpenShell release differs: Cargo.toml $(echo $cargo), $spec $spec_v, test/vm/openshell-version $test_v" >&2
 	exit 1
 fi
-# _service: OpenShell's source at the commit Cargo.lock locks, named and
-# vendored as the spec's release.
+# _service: OpenShell's source at the commit Cargo.lock locks, named as
+# the spec's release.
 svc_rev=$(sed -n '/OpenShell\.git/,/<\/service>/ s|.*<param name="revision">\([^<]*\)<.*|\1|p' "$service")
 svc_v=v$(sed -n 's|.*<param name="version">\([^<]*\)<.*|\1|p' "$service")
-svc_src=$(grep -c "<param name=\"src\">openshell-${cargo#v}\.tar\.gz<" "$service" || true)
 commit=$(locked "$cargo")
-if [ -z "$commit" ] || [ "$svc_rev" != "$commit" ] || [ "$svc_v" != "$cargo" ] || [ "$svc_src" != 1 ]; then
-	echo "$service differs: OpenShell at ${svc_rev:-?} as $svc_v, not at Cargo.lock's ${commit:-?} as $cargo (or cargo_vendor's src is not openshell-${cargo#v}.tar.gz): cargo update, then tools/openshell-version $cargo" >&2
+if [ -z "$commit" ] || [ "$svc_rev" != "$commit" ] || [ "$svc_v" != "$cargo" ]; then
+	echo "$service differs: OpenShell at ${svc_rev:-?} as $svc_v, not at Cargo.lock's ${commit:-?} as $cargo: cargo update, then tools/openshell-version $cargo" >&2
 	exit 1
 fi
 echo "$cargo"

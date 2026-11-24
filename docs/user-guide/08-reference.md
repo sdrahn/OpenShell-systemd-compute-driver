@@ -56,9 +56,11 @@ of `openshell-sandbox-supervisor@.service`.
 
 ## The stock programs {#stock}
 
-`/usr/libexec/openshell/openshell-supervisor` and
-`/usr/libexec/openshell/openshell-sandbox` are OpenShell's, built
-unchanged from the release below. Their arguments are in the unit
+`/usr/bin/openshell-supervisor` and `/usr/bin/openshell-sandbox` are
+OpenShell's, from the packages `openshell-supervisor` and
+`openshell-sandbox` of the release below, which the driver's package
+requires. The policy module labels them for the sandboxes' domains,
+which they enter only when systemd starts them as a sandbox's units. Their arguments are in the unit
 templates; their settings come with each launch from the gateway and
 the driver.
 

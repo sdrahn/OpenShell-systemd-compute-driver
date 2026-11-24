@@ -24,8 +24,9 @@ name = "openshell-supervisor-fence"
 path = "src/bin/openshell-supervisor-fence.rs"
 
 # OpenShell does not publish its crates. They come from the release named
-# here, which is also the release the package builds openshell-supervisor
-# and openshell-sandbox from (packaging/suse): the three always match.
+# here, which is also the release of the openshell-supervisor and
+# openshell-sandbox packages the package requires (packaging/suse): they
+# always match.
 # Change the tag in all four lines and in packaging/suse at once
 # (tools/openshell-version).
 [dependencies]

@@ -156,7 +156,7 @@ mod tests {
             "--runtime-dir",
             "/run/x",
             "--",
-            "/usr/libexec/openshell/openshell-supervisor",
+            "/usr/bin/openshell-supervisor",
             "--workdir",
             "/sandbox",
         ])
