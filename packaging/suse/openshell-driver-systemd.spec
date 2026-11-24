@@ -27,9 +27,11 @@ Source1:        openshell-%{openshell_version}.tar.gz
 # uses, which are built from that tree.
 Source2:        vendor.tar.zst
 BuildRequires:  cargo >= 1.94
-BuildRequires:  clang-devel
-BuildRequires:  cmake
-BuildRequires:  gcc-c++
+# The C compiler and linker: aws-lc-sys (OpenShell's crypto, through
+# aws-lc-rs) builds AWS-LC with cc, from bindings it ships for x86_64 and
+# aarch64, so neither CMake nor clang is needed.
+BuildRequires:  gcc
+# The policy module (selinux/).
 BuildRequires:  make
 BuildRequires:  pkgconfig
 # The macros below (%%sysusers_requires, the service macros) add this
