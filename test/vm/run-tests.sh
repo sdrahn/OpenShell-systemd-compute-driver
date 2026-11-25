@@ -153,10 +153,10 @@ inside() { timeout 90 openshell sandbox exec "$1" -- "${@:2}"; }
 section "the packages"
 check "the driver's package is installed" rpm -q openshell-driver-systemd
 check "the policy module's package is installed" rpm -q openshell-driver-systemd-selinux
-# It asks for selinux-policy's version, not the build's release: a host
-# with an older release of the same version can install it.
-check "it requires selinux-policy by version only, not the build's release" bash -c \
-	"r=\$(rpm -q --requires openshell-driver-systemd-selinux | grep -E '^selinux-policy[a-z-]* >= '); [ -n \"\$r\" ] && ! grep -Eq ' >= [^ ]*-' <<<\"\$r\""
+# It asks for selinux-policy's date, not the build's git snapshot or
+# release: a host with an older build of the same policy can install it.
+check "it requires selinux-policy by its date only, not the build's snapshot or release" bash -c \
+	"r=\$(rpm -q --requires openshell-driver-systemd-selinux | grep -E '^selinux-policy[a-z-]* >= '); [ -n \"\$r\" ] && ! grep -Eq ' >= [^ ]*[-+]' <<<\"\$r\""
 # The mount points are the package's, so that a read-only root (a
 # transactional system) has them before the helper starts.
 check "the package ships the sandboxes' mount points" rpm -qf /.openshell/supervisor /.openshell/channel /sandbox
