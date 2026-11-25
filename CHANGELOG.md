@@ -9,6 +9,42 @@ added by the pull request that makes the change. `tools/changelog show`
 prints them as the next release's section; a release writes them here.
 Released sections stay as they are.
 
+## v0.3.1 — 2026-11-25
+
+The driver on OpenShell 0.1.10, with smaller build requirements and an
+SELinux package that installs on hosts whose `selinux-policy` is an
+older snapshot of the same release. The driver's code and its protocol
+with the gateway are as in 0.3.0.
+
+To update: the repository that holds the driver has to hold
+`openshell-supervisor` and `openshell-sandbox` of OpenShell 0.1.10, and
+the gateway has to be 0.1.10 too. Install the packages; on a
+transactional system in a new snapshot (`transactional-update pkg
+install …`), then reboot into it. Then restart the helper (`systemctl
+restart openshell-systemd-helper.service`), the gateway and the driver
+as the gateway's user (`systemctl --user restart
+openshell-gateway.service openshell-driver-systemd.service`). A sandbox
+that runs keeps the programs it started with until it is restarted.
+
+### Changed
+
+- The package builds with `gcc` alone: it no longer needs
+  `clang-devel`, `cmake` and `gcc-c++`, which were for building
+  OpenShell's supervisor and sandbox, now packages of their own.
+- Built against OpenShell 0.1.10, where it was 0.1.9: the driver's
+  crates come from that release, the package requires its
+  `openshell-supervisor` and `openshell-sandbox`, and the tests run its
+  gateway. Run it with an OpenShell gateway of 0.1.10. The driver's
+  protocol with the gateway is unchanged.
+
+### Fixed
+
+- `openshell-driver-systemd-selinux` requires `selinux-policy` by its
+  date only (`>= 20260826`), where it required the build's version with
+  its git snapshot (`>= 20260826+git190.1d6a6b164`): a build against a
+  newer snapshot of the same policy, not yet released to hosts, could
+  not be installed.
+
 ## v0.3.0 — 2026-11-24
 
 The driver on OpenShell 0.1.9, with OpenShell's own packages. The
