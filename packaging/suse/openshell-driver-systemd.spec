@@ -9,7 +9,7 @@
 # openshell-supervisor and openshell-sandbox of the same release, from
 # their own packages (tools/openshell-version keeps this line, Cargo.toml,
 # _service and the tests in step).
-%define openshell_version 0.1.9
+%define openshell_version 0.1.10
 %define selinuxtype targeted
 %define modulename openshell_systemd
 
@@ -27,9 +27,11 @@ Source1:        openshell-%{openshell_version}.tar.gz
 # uses, which are built from that tree.
 Source2:        vendor.tar.zst
 BuildRequires:  cargo >= 1.94
-BuildRequires:  clang-devel
-BuildRequires:  cmake
-BuildRequires:  gcc-c++
+# The C compiler and linker: aws-lc-sys (OpenShell's crypto, through
+# aws-lc-rs) builds AWS-LC with cc, from bindings it ships for x86_64 and
+# aarch64, so neither CMake nor clang is needed.
+BuildRequires:  gcc
+# The policy module (selinux/).
 BuildRequires:  make
 BuildRequires:  pkgconfig
 # The macros below (%%sysusers_requires, the service macros) add this
@@ -75,8 +77,11 @@ BuildArch:      noarch
 # policy version cannot be installed on a host without that update (a
 # Package Hub build for SLES 16.1 asked for selinux-policy's release
 # 160150.1.13; the host had 160100.1.4 of the same version). The module
-# needs the policy version only: drop the release.
-%{?_selinux_policy_version:%global _selinux_policy_version %(echo '%{_selinux_policy_version}' | cut -d- -f1)}
+# needs the policy version only: drop the release. SUSE's version
+# carries a git snapshot as well (20260826+git190.1d6a6b164), which a
+# newer build of the same policy raises without a release to hosts:
+# keep the date alone (>= 20260826).
+%{?_selinux_policy_version:%global _selinux_policy_version %(echo '%{_selinux_policy_version}' | sed 's/[-+].*//')}
 %{?selinux_requires}
 
 %description selinux
