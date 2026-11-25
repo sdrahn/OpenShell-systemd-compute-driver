@@ -30,10 +30,10 @@ path = "src/bin/openshell-supervisor-fence.rs"
 # Change the tag in all four lines and in packaging/suse at once
 # (tools/openshell-version).
 [dependencies]
-openshell-core = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.9", default-features = false, features = ["driver-extraction", "otel", "clap"] }
-openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.9", default-features = false, features = ["aws-lc"] }
-openshell-isolation-interface = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.9" }
-openshell-sandbox-backend = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.9" }
+openshell-core = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.10", default-features = false, features = ["driver-extraction", "otel", "clap"] }
+openshell-crypto = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.10", default-features = false, features = ["aws-lc"] }
+openshell-isolation-interface = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.10" }
+openshell-sandbox-backend = { git = "https://github.com/NVIDIA/OpenShell", tag = "v0.1.10" }
 
 clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3"
