@@ -26,8 +26,8 @@
   <service name="tar_scm" mode="manual">
     <param name="url">https://github.com/NVIDIA/OpenShell.git</param>
     <param name="scm">git</param>
-    <param name="revision">ce58cf8e9b953281352d98a637e41616295b1318</param>
-    <param name="version">0.1.9</param>
+    <param name="revision">152c59d3178039e3fbb4a5595f9fff7216a6be92</param>
+    <param name="version">0.1.10</param>
     <param name="filename">openshell</param>
     <param name="exclude">.git</param>
   </service>

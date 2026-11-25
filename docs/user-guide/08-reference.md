@@ -148,8 +148,9 @@ A sandbox's level is `s0:cN,cM`, two different categories out of
 | `openshell-driver-systemd-tests` | the main package and the tools the tests use |
 
 The OpenShell release a package is built against is in its description
-(`rpm -qi openshell-driver-systemd`): **0.1.9** from version 0.3 of the
-driver on, **0.1.8** for versions 0.1 and 0.2. The driver uses crates of OpenShell that OpenShell does not
+(`rpm -qi openshell-driver-systemd`): **0.1.10** from version 0.3.1 of
+the driver on, **0.1.9** for version 0.3.0, **0.1.8** for versions 0.1
+and 0.2. The driver uses crates of OpenShell that OpenShell does not
 promise to keep stable, so a package is built, and tested, against that
 one release only. `openshell gateway info` shows the driver's own
 version as the gateway sees it.
